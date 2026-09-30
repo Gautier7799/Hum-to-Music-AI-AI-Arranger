@@ -443,7 +443,9 @@ class AudioViewModel : ViewModel() {
         val minor = scale.equals("Minor", ignoreCase = true)
         val chordRoot = chordRootSemitones(chord, root)
         val progression = progressionForStyle(style, chordRoot, minor)
+        val beatsPerSecond = 2.0
         val bars = maxOf(1, kotlin.math.ceil(totalSamples.toDouble() / (rate * 2.0)).toInt())
+        val phraseBars = maxOf(4, minOf(8, bars / 4))
 
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
@@ -465,7 +467,7 @@ class AudioViewModel : ViewModel() {
                 val beat = t * 2.0
                 val bar = beat / 4.0
                 val section = arrangementSection(bar.toInt(), bars)
-                val sectionLevel = sectionLevel(section)
+                val sectionLevel = sectionLevel(section, phraseBars)
                 val chordShift = when (section) {
                     "Intro" -> 0
                     "Verse" -> 0
@@ -519,21 +521,24 @@ class AudioViewModel : ViewModel() {
         if (totalBars <= 4) return "Verse"
         val progress = bar.toDouble() / totalBars.toDouble()
         return when {
-            progress < 0.15 -> "Intro"
-            progress < 0.45 -> "Verse"
-            progress < 0.70 -> "Chorus"
-            progress < 0.88 -> "Bridge"
+            progress < 0.12 -> "Intro"
+            progress < 0.42 -> "Verse"
+            progress < 0.68 -> "Chorus"
+            progress < 0.84 -> "Bridge"
             else -> "Outro"
         }
     }
 
-    private fun sectionLevel(section: String): Double = when (section) {
-        "Intro" -> 0.58
-        "Verse" -> 0.82
-        "Chorus" -> 1.0
-        "Bridge" -> 0.72
-        "Outro" -> 0.62
-        else -> 0.82
+    private fun sectionLevel(section: String, phraseBars: Int): Double {
+        val phrasePosition = (phraseBars % 4) / 4.0
+        return when (section) {
+            "Intro" -> 0.50 + phrasePosition * 0.10
+            "Verse" -> 0.76 + phrasePosition * 0.08
+            "Chorus" -> 0.94 + phrasePosition * 0.06
+            "Bridge" -> 0.66 + phrasePosition * 0.08
+            "Outro" -> 0.58
+            else -> 0.80
+        }
     }
 
     private fun drumLevel(section: String, style: String): Double = when (section) {
