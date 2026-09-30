@@ -315,7 +315,7 @@ fun Wave(level: Float, modifier: Modifier) {
         path.moveTo(0f, mid)
         for (i in 0..100) {
             val x = size.width * i / 100f
-            val y = mid + kotlin.math.sin(i * .5) * level * size.height * .4f
+            val y = mid + kotlin.math.sin(i * .5f) * level * size.height * .4f
             path.lineTo(x, y)
         }
         drawPath(path, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
