@@ -95,17 +95,36 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun HumToMusicTheme(content: @Composable () -> Unit) {
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+
+    val light = lightColorScheme(
+        background = androidx.compose.ui.graphics.Color(0xFFF7F7F5),
+        surface = androidx.compose.ui.graphics.Color(0xFFFFFFFF),
+        surfaceVariant = androidx.compose.ui.graphics.Color(0xFFE8E8E6),
+        primary = androidx.compose.ui.graphics.Color(0xFF171719),
+        onPrimary = androidx.compose.ui.graphics.Color(0xFFFFFFFF),
+        onBackground = androidx.compose.ui.graphics.Color(0xFF111113),
+        onSurface = androidx.compose.ui.graphics.Color(0xFF111113),
+        onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFF6F6F74),
+        outline = androidx.compose.ui.graphics.Color(0xFF9A9A9F)
+    )
+
     val dark = darkColorScheme(
-        background = androidx.compose.ui.graphics.Color(0xFF0B0B0D),
-        surface = androidx.compose.ui.graphics.Color(0xFF151518),
-        surfaceVariant = androidx.compose.ui.graphics.Color(0xFF202024),
-        primary = androidx.compose.ui.graphics.Color(0xFFEDEDED),
-        onPrimary = androidx.compose.ui.graphics.Color(0xFF101012),
+        background = androidx.compose.ui.graphics.Color(0xFF08090B),
+        surface = androidx.compose.ui.graphics.Color(0xFF111216),
+        surfaceVariant = androidx.compose.ui.graphics.Color(0xFF1C1D22),
+        primary = androidx.compose.ui.graphics.Color(0xFFF2F2F2),
+        onPrimary = androidx.compose.ui.graphics.Color(0xFF0A0A0C),
         onBackground = androidx.compose.ui.graphics.Color(0xFFF5F5F5),
         onSurface = androidx.compose.ui.graphics.Color(0xFFF5F5F5),
-        onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFB8B8BE)
+        onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFA9A9B0),
+        outline = androidx.compose.ui.graphics.Color(0xFF55565D)
     )
-    MaterialTheme(colorScheme = dark, content = content)
+
+    MaterialTheme(
+        colorScheme = if (isDark) dark else light,
+        content = content
+    )
 }
 
 data class UiState(
