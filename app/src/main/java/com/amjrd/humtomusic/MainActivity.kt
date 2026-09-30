@@ -354,16 +354,23 @@ class AudioViewModel : ViewModel() {
                 val release = ((samplesPerNote - local) / (rate * 0.09)).coerceAtMost(1.0)
                 val envelope = minOf(attack, release).coerceAtLeast(0.0)
 
-                val harmonic = when (style) {
-                    "Acoustic" -> sin(2.0 * PI * frequency * t) + 0.28 * sin(2.0 * PI * frequency * 2.0 * t)
-                    "Cinematic" -> sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 0.5 * t)
-                    "Lo-Fi" -> sin(2.0 * PI * frequency * t) + 0.12 * sin(2.0 * PI * frequency * 2.0 * t)
-                    else -> sin(2.0 * PI * frequency * t) +
-                        0.22 * sin(2.0 * PI * frequency * 2.0 * t) +
-                        0.08 * sin(2.0 * PI * frequency * 3.0 * t)
+                val harmonic = when (sound) {
+                    "Acoustic Guitar" -> sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 2.0 * t)
+                    "Electric Guitar" -> sin(2.0 * PI * frequency * t) + 0.30 * sin(2.0 * PI * frequency * 2.0 * t)
+                    "Bass" -> sin(2.0 * PI * frequency * 0.5 * t) + 0.12 * sin(2.0 * PI * frequency * t)
+                    "Strings" -> sin(2.0 * PI * frequency * t) + 0.22 * sin(2.0 * PI * frequency * 2.0 * t)
+                    "Synth" -> sin(2.0 * PI * frequency * t) + 0.35 * sin(2.0 * PI * frequency * 2.0 * t)
+                    "Drums" -> sin(2.0 * PI * 90.0 * t) * (1.0 - t / 0.42).coerceAtLeast(0.0)
+                    "Orchestra" -> sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 2.0 * t) + 0.08 * sin(2.0 * PI * frequency * 3.0 * t)
+                    else -> sin(2.0 * PI * frequency * t) + 0.22 * sin(2.0 * PI * frequency * 2.0 * t)
                 }
 
-                val sample = (harmonic * 0.16 * envelope * 32767.0).toInt().coerceIn(-32768, 32767)
+                val rootMidi = 48 + root
+                val chordTone = rootMidi + chordIntervals[(noteIndex + i / (samplesPerNote / 2).coerceAtLeast(1)) % chordIntervals.size]
+                val chordFrequency = 440.0 * 2.0.pow((chordTone - 69) / 12.0)
+                val chordPad = 0.06 * sin(2.0 * PI * chordFrequency * t)
+
+                val sample = ((harmonic * 0.15 + chordPad) * envelope * 32767.0).toInt().coerceIn(-32768, 32767)
                 out.write(sample and 255)
                 out.write((sample shr 8) and 255)
             }
