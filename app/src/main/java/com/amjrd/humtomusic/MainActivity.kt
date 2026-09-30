@@ -8,6 +8,7 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var currentViewModel: AudioViewModel
     private var sharedLyrics by mutableStateOf("")
+    private var mediaPlayer: MediaPlayer? = null
 
     private val openLyricsFile = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -85,7 +87,9 @@ class MainActivity : ComponentActivity() {
                         currentViewModel.state.file?.takeIf { it.exists() }?.let {
                             saveWav.launch("hum-to-music-melody.wav")
                         }
-                    }
+                    },
+                    onPlayAudio = { playAudio() },
+                    onStopAudio = { stopAudio() }
                 )
             }
         }
@@ -93,7 +97,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIncomingLyrics(intent)
+    }
+
+    private fun playAudio() {
+        val file = currentViewModel.state.file?.takeIf { it.exists() } ?: return
+        stopAudio()
+        mediaPlayer = MediaPlayer().apply {
+            setDataSource(file.absolutePath)
+            setOnCompletionListener { stopAudio() }
+            prepare()
+            start()
+        }
+    }
+
+    private fun stopAudio() {
+        try { mediaPlayer?.stop() } catch (_: Exception) { }
+        mediaPlayer?.release()
+        mediaPlayer = null
+    }
+
+    override fun onDestroy() {
+        stopAudio()
+        super.onDestroy()
     }
 
     private fun handleIncomingLyrics(intent: Intent?) {
@@ -379,15 +406,16 @@ class AudioViewModel : ViewModel() {
 
     fun createTextDemo(lyrics: String) {
         if (state.generatingMelody) return
-        if (lyrics.isBlank()) return
 
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) {
                 state = state.copy(generatingMelody = true, message = "Creating a local demo…")
             }
             val seed = lyrics.length
-            val notes = listOf(60, 62, 64, 67, 64, 62, 60, 55).map {
-                it + if (seed % 3 == 0) 0 else 0
+            val notes = if (lyrics.isBlank()) {
+                listOf(60, 64, 67, 72, 67, 64, 60, 55)
+            } else {
+                listOf(60, 62, 64, 67, 64, 62, 60, 55)
             }
             val file = File.createTempFile("text_demo_", ".wav")
             createMelodyWav(file, notes, state.style, state.sound, state.key, state.scale, state.chord)
@@ -395,7 +423,7 @@ class AudioViewModel : ViewModel() {
                 state = state.copy(
                     generatingMelody = false,
                     file = file,
-                    message = "Demo ready — no API key required"
+                    message = if (lyrics.isBlank()) "Instrumental demo ready — no API key required" else "Demo ready — no API key required"
                 )
             }
         }
@@ -483,9 +511,15 @@ fun HumToMusicApp(
     onImportLyrics: () -> Unit,
     onRequestMicrophone: () -> Unit,
     onOpenSystemSettings: () -> Unit,
-    onExportWav: () -> Unit
+    onExportWav: () -> Unit,
+    onPlayAudio: () -> Unit,
+    onStopAudio: () -> Unit
 ) {
     var screen by remember { mutableStateOf(if (importedLyrics.isNotBlank()) "create" else "home") }
+
+    LaunchedEffect(importedLyrics) {
+        if (importedLyrics.isNotBlank()) screen = "create"
+    }
 
     when (screen) {
         "home" -> HomeScreen(
@@ -496,9 +530,9 @@ fun HumToMusicApp(
             onSongs = { screen = "songs" },
             onSettings = { screen = "settings" }
         )
-        "create" -> CreateSongScreen(vm, importedLyrics, onImportLyrics, onBack = { screen = "home" })
+        "create" -> CreateSongScreen(vm, importedLyrics, onImportLyrics, onBack = { screen = "home" }, onPlayAudio = onPlayAudio, onStopAudio = onStopAudio)
         "record" -> RecordScreen(vm, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone, onCreateMusicAi = { screen = "create" })
-        "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav)
+        "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav, onPlayAudio, onStopAudio)
         "settings" -> SettingsScreen(
             onBack = { screen = "home" },
             onRequestMicrophone = onRequestMicrophone,
@@ -539,7 +573,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.0.3 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.0.5 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -567,7 +601,9 @@ private fun CreateSongScreen(
     vm: AudioViewModel,
     importedLyrics: String,
     onImportLyrics: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onPlayAudio: () -> Unit,
+    onStopAudio: () -> Unit
 ) {
     var lyrics by remember { mutableStateOf(importedLyrics) }
     LaunchedEffect(importedLyrics) {
@@ -669,10 +705,17 @@ private fun CreateSongScreen(
         Spacer(Modifier.height(12.dp))
         Button(
             onClick = { vm.createTextDemo(lyrics) },
-            enabled = lyrics.isNotBlank() && !vm.state.generatingMelody,
+            enabled = !vm.state.generatingMelody,
             modifier = Modifier.fillMaxWidth().height(54.dp)
         ) {
-            Text(if (vm.state.generatingMelody) "Creating…" else "✨ Generate Sound")
+            Text(if (vm.state.generatingMelody) "Creating…" else "✨ Create Sound")
+        }
+        Spacer(Modifier.height(10.dp))
+        if (vm.state.file?.exists() == true && !vm.state.generatingMelody) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPlayAudio, modifier = Modifier.weight(1f)) { Text("▶ Play") }
+                OutlinedButton(onClick = onStopAudio, modifier = Modifier.weight(1f)) { Text("■ Stop") }
+            }
         }
         Spacer(Modifier.height(10.dp))
         Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
@@ -733,7 +776,7 @@ private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrop
 }
 
 @Composable
-private fun SongsScreen(vm: AudioViewModel, onBack: () -> Unit, onExport: () -> Unit) {
+private fun SongsScreen(vm: AudioViewModel, onBack: () -> Unit, onExport: () -> Unit, onPlayAudio: () -> Unit, onStopAudio: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(22.dp)) {
         BackTitle("My Songs", onBack)
         Spacer(Modifier.height(22.dp))
@@ -743,6 +786,11 @@ private fun SongsScreen(vm: AudioViewModel, onBack: () -> Unit, onExport: () -> 
                     Text("Latest melody", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onPlayAudio, modifier = Modifier.weight(1f)) { Text("▶ Play") }
+                        OutlinedButton(onClick = onStopAudio, modifier = Modifier.weight(1f)) { Text("■ Stop") }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
                         Text("Export WAV")
                     }
