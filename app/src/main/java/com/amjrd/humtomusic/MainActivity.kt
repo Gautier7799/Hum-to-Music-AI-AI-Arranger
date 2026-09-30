@@ -1,68 +1,89 @@
 package com.amjrd.humtomusic
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.abs
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.log2
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
-    private val permission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val microphonePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
     private lateinit var currentViewModel: AudioViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         currentViewModel = AudioViewModel()
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            permission.launch(Manifest.permission.RECORD_AUDIO)
-        }
+
         setContent {
-            HumToMusicApp(
-                vm = currentViewModel,
-                onRecordClick = {
-                    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                        currentViewModel.toggle()
-                    } else {
-                        permission.launch(Manifest.permission.RECORD_AUDIO)
+            HumToMusicTheme {
+                HumToMusicApp(
+                    vm = currentViewModel,
+                    onRequestMicrophone = { requestMicrophone() },
+                    onOpenSystemSettings = {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    },
+                    onExportWav = {
+                        currentViewModel.state.file?.takeIf { it.exists() }?.let {
+                            saveWav.launch("hum-to-music-melody.wav")
+                        }
                     }
-                },
-                onExportWav = {
-                    currentViewModel.state.file?.takeIf { it.exists() }?.let {
-                        saveWav.launch("hum-to-music.wav")
-                    }
-                }
-            )
+                )
+            }
         }
     }
 
-    private val saveWav = registerForActivityResult(ActivityResultContracts.CreateDocument("audio/wav")) { uri ->
+    private fun requestMicrophone() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    private val saveWav = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("audio/wav")
+    ) { uri ->
         uri ?: return@registerForActivityResult
         val file = currentViewModel.state.file ?: return@registerForActivityResult
         if (!file.exists()) return@registerForActivityResult
@@ -72,16 +93,31 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable
+private fun HumToMusicTheme(content: @Composable () -> Unit) {
+    val dark = darkColorScheme(
+        background = androidx.compose.ui.graphics.Color(0xFF0B0B0D),
+        surface = androidx.compose.ui.graphics.Color(0xFF151518),
+        surfaceVariant = androidx.compose.ui.graphics.Color(0xFF202024),
+        primary = androidx.compose.ui.graphics.Color(0xFFEDEDED),
+        onPrimary = androidx.compose.ui.graphics.Color(0xFF101012),
+        onBackground = androidx.compose.ui.graphics.Color(0xFFF5F5F5),
+        onSurface = androidx.compose.ui.graphics.Color(0xFFF5F5F5),
+        onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFB8B8BE)
+    )
+    MaterialTheme(colorScheme = dark, content = content)
+}
+
 data class UiState(
     val recording: Boolean = false,
+    val generatingMelody: Boolean = false,
     val seconds: Int = 0,
     val level: Float = 0f,
     val note: String = "—",
     val hz: Float = 0f,
-    val style: String = "Acoustic",
+    val style: String = "Piano",
     val file: File? = null,
-    val demoGenerating: Boolean = false,
-    val demoMessage: String = "Demo mode — no API key required"
+    val message: String = "Ready — hum a melody"
 )
 
 class AudioViewModel : ViewModel() {
@@ -90,9 +126,9 @@ class AudioViewModel : ViewModel() {
 
     private var record: AudioRecord? = null
     private var job: Job? = null
-    private var output: File? = null
     private val recording = AtomicBoolean(false)
     private val rate = 44100
+    private val melodyFrames = mutableListOf<Pair<Long, Int>>()
 
     fun toggle() {
         if (recording.get()) stop() else start()
@@ -100,6 +136,7 @@ class AudioViewModel : ViewModel() {
 
     private fun start() {
         if (recording.get()) return
+
         val minBuffer = AudioRecord.getMinBufferSize(
             rate,
             AudioFormat.CHANNEL_IN_MONO,
@@ -111,7 +148,7 @@ class AudioViewModel : ViewModel() {
         } catch (_: Exception) {
             return
         }
-        output = created
+        melodyFrames.clear()
 
         try {
             record = AudioRecord(
@@ -129,7 +166,13 @@ class AudioViewModel : ViewModel() {
 
             record!!.startRecording()
             recording.set(true)
-            state = state.copy(recording = true, seconds = 0, file = created)
+            state = state.copy(
+                recording = true,
+                generatingMelody = false,
+                seconds = 0,
+                file = null,
+                message = "Listening… hum your melody"
+            )
 
             val r = record!!
             job = viewModelScope.launch(Dispatchers.IO) {
@@ -152,6 +195,12 @@ class AudioViewModel : ViewModel() {
                                     .maxOfOrNull { abs(it.toInt()) }
                                     ?.div(32768f) ?: 0f
                                 val hz = pitch(buffer, n)
+                                val midi = hzToMidi(hz)
+                                if (midi != null) {
+                                    synchronized(melodyFrames) {
+                                        melodyFrames.add(System.currentTimeMillis() to midi)
+                                    }
+                                }
 
                                 withContext(Dispatchers.Main) {
                                     state = state.copy(
@@ -176,68 +225,124 @@ class AudioViewModel : ViewModel() {
             recording.set(false)
             record?.release()
             record = null
-            state = state.copy(recording = false)
+            state = state.copy(recording = false, message = "Microphone could not be started")
         }
     }
 
     fun stop() {
+        if (!recording.get()) return
         recording.set(false)
-        try {
-            record?.stop()
-        } catch (_: IllegalStateException) {
-        }
+        try { record?.stop() } catch (_: IllegalStateException) { }
         record?.release()
         record = null
+
+        val finishingJob = job
+        viewModelScope.launch {
+            finishingJob?.join()
+            generateMelodyFromHum()
+        }
     }
 
-    fun setStyle(style: String) {
-        state = state.copy(style = style)
-    }
-
-    fun generateDemoSong(lyrics: String) {
-        if (state.demoGenerating) return
-        val text = lyrics.trim()
-        if (text.isEmpty()) {
-            state = state.copy(demoMessage = "اكتب كلمات الأغنية أولاً")
+    private suspend fun generateMelodyFromHum() {
+        val frames = synchronized(melodyFrames) { melodyFrames.toList() }
+        if (frames.size < 3) {
+            state = state.copy(message = "لم نلقاوش نوتات كافية. جرّب تدندن بصوت أوضح وأطول.")
             return
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
+        state = state.copy(generatingMelody = true, message = "Creating your melody…")
+        withContext(Dispatchers.IO) {
+            val notes = compressMelody(frames)
+            if (notes.isEmpty()) return@withContext
+            val melodyFile = File.createTempFile("melody_", ".wav")
+            createMelodyWav(melodyFile, notes, state.style)
             withContext(Dispatchers.Main) {
                 state = state.copy(
-                    demoGenerating = true,
-                    demoMessage = "Creating a local demo melody…"
-                )
-            }
-
-            val file = File.createTempFile("demo_song_", ".wav")
-            createDemoWav(file, text)
-
-            withContext(Dispatchers.Main) {
-                state = state.copy(
-                    demoGenerating = false,
-                    file = file,
-                    demoMessage = "Demo ready — local melody, no API key"
+                    generatingMelody = false,
+                    file = melodyFile,
+                    message = "Melody ready — created from your hum"
                 )
             }
         }
     }
 
-    private fun createDemoWav(file: File, text: String) {
-        val durationSeconds = 12
-        val totalSamples = rate * durationSeconds
-        val notes = intArrayOf(261, 294, 330, 392, 330, 294, 261, 220)
+    private fun compressMelody(frames: List<Pair<Long, Int>>): List<Int> {
+        val first = frames.firstOrNull()?.first ?: return emptyList()
+        val buckets = linkedMapOf<Long, MutableList<Int>>()
+        for ((time, midi) in frames) {
+            val bucket = (time - first) / 220L
+            buckets.getOrPut(bucket) { mutableListOf() }.add(midi)
+        }
+
+        val raw = buckets.values.mapNotNull { values ->
+            values.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+        }
+
+        val simplified = mutableListOf<Int>()
+        for (n in raw) if (simplified.lastOrNull() != n) simplified.add(n)
+
+        return simplified.take(32)
+    }
+
+    private fun createMelodyWav(file: File, notes: List<Int>, style: String) {
+        val samplesPerNote = (rate * 0.42).toInt()
+        val totalSamples = samplesPerNote * notes.size
+
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
             for (i in 0 until totalSamples) {
-                val noteIndex = ((i.toLong() * notes.size) / totalSamples).toInt()
-                val frequency = notes[noteIndex.coerceIn(0, notes.lastIndex)].toDouble()
-                val envelope = if (text.length % 2 == 0) 0.16 else 0.12
-                val sample = (sin(2.0 * PI * frequency * i / rate) * 32767.0 * envelope).toInt()
+                val noteIndex = (i / samplesPerNote).coerceIn(0, notes.lastIndex)
+                val midi = notes[noteIndex]
+                val frequency = 440.0 * 2.0.pow((midi - 69) / 12.0)
+                val local = i % samplesPerNote
+                val t = local.toDouble() / rate
+
+                val attack = (local / (rate * 0.035)).coerceAtMost(1.0)
+                val release = ((samplesPerNote - local) / (rate * 0.09)).coerceAtMost(1.0)
+                val envelope = minOf(attack, release).coerceAtLeast(0.0)
+
+                val harmonic = when (style) {
+                    "Acoustic" -> sin(2.0 * PI * frequency * t) + 0.28 * sin(2.0 * PI * frequency * 2.0 * t)
+                    "Cinematic" -> sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 0.5 * t)
+                    "Lo-Fi" -> sin(2.0 * PI * frequency * t) + 0.12 * sin(2.0 * PI * frequency * 2.0 * t)
+                    else -> sin(2.0 * PI * frequency * t) +
+                        0.22 * sin(2.0 * PI * frequency * 2.0 * t) +
+                        0.08 * sin(2.0 * PI * frequency * 3.0 * t)
+                }
+
+                val sample = (harmonic * 0.16 * envelope * 32767.0).toInt().coerceIn(-32768, 32767)
                 out.write(sample and 255)
                 out.write((sample shr 8) and 255)
             }
         }
+    }
+
+    fun createTextDemo(lyrics: String) {
+        if (state.generatingMelody) return
+        if (lyrics.isBlank()) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                state = state.copy(generatingMelody = true, message = "Creating a local demo…")
+            }
+            val seed = lyrics.length
+            val notes = listOf(60, 62, 64, 67, 64, 62, 60, 55).map {
+                it + if (seed % 3 == 0) 0 else 0
+            }
+            val file = File.createTempFile("text_demo_", ".wav")
+            createMelodyWav(file, notes, state.style)
+            withContext(Dispatchers.Main) {
+                state = state.copy(
+                    generatingMelody = false,
+                    file = file,
+                    message = "Demo ready — no API key required"
+                )
+            }
+        }
+    }
+
+    fun setStyle(style: String) {
+        state = state.copy(style = style)
     }
 
     override fun onCleared() {
@@ -258,11 +363,15 @@ class AudioViewModel : ViewModel() {
         return if (hz in 60f..1200f) hz else 0f
     }
 
+    private fun hzToMidi(hz: Float): Int? {
+        if (hz <= 0f) return null
+        return (69 + 12 * log2(hz / 440f)).roundToInt().coerceIn(24, 96)
+    }
+
     private fun note(hz: Float): String {
-        if (hz <= 0f) return "—"
+        val midi = hzToMidi(hz) ?: return "—"
         val names = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
-        val midi = (69 + 12 * (kotlin.math.log2(hz / 440f))).roundToInt()
-        return "${names[(midi % 12 + 12) % 12]}${midi / 12 - 1}"
+        return "\${names[(midi % 12 + 12) % 12]}\${midi / 12 - 1}"
     }
 
     private fun writeWavHeader(out: FileOutputStream, size: Int) {
@@ -304,111 +413,258 @@ class AudioViewModel : ViewModel() {
 
 @Composable
 fun HumToMusicApp(
-    vm: AudioViewModel = viewModel(),
-    onRecordClick: () -> Unit,
+    vm: AudioViewModel,
+    onRequestMicrophone: () -> Unit,
+    onOpenSystemSettings: () -> Unit,
     onExportWav: () -> Unit
 ) {
-    MaterialTheme {
-        var tab by remember { mutableIntStateOf(0) }
-        val titles = listOf("Create", "Record", "Analyze", "Arrange", "Export")
-        val icons = listOf("✦", "●", "♫", "♪", "⇩")
-        Scaffold(
-            bottomBar = {
-                NavigationBar {
-                    titles.forEachIndexed { index, title ->
-                        NavigationBarItem(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            icon = { Text(icons[index]) },
-                            label = { Text(title) }
-                        )
+    var screen by remember { mutableStateOf("home") }
+
+    when (screen) {
+        "home" -> HomeScreen(
+            vm = vm,
+            onCreate = { screen = "create" },
+            onHum = { screen = "record" },
+            onInstrumental = { screen = "create" },
+            onSongs = { screen = "songs" },
+            onSettings = { screen = "settings" }
+        )
+        "create" -> CreateSongScreen(vm, onBack = { screen = "home" })
+        "record" -> RecordScreen(vm, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone)
+        "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav)
+        "settings" -> SettingsScreen(
+            onBack = { screen = "home" },
+            onRequestMicrophone = onRequestMicrophone,
+            onOpenSystemSettings = onOpenSystemSettings
+        )
+    }
+}
+
+@Composable
+private fun HomeScreen(
+    vm: AudioViewModel,
+    onCreate: () -> Unit,
+    onHum: () -> Unit,
+    onInstrumental: () -> Unit,
+    onSongs: () -> Unit,
+    onSettings: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("Hum to Music AI", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text("Turn an idea into music", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("⚙", fontSize = 25.sp, modifier = Modifier.clickable { onSettings() })
+        }
+
+        Spacer(Modifier.height(28.dp))
+        Text("What do you want to create?", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(14.dp))
+
+        HomeAction("✍️", "Create Song", "Write lyrics and build a song", onCreate)
+        HomeAction("🎙️", "Hum a Melody", "Hum your idea and turn it into music", onHum)
+        HomeAction("🎧", "Instrumental", "Start with a simple instrumental", onInstrumental)
+
+        Spacer(Modifier.height(20.dp))
+        OutlinedButton(onClick = onSongs, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("🎼  My Songs")
+        }
+
+        Spacer(Modifier.weight(1f))
+        Text("v1.0.2 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun HomeAction(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { onClick() },
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 30.sp)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            Text("›", fontSize = 28.sp)
+        }
+    }
+}
+
+@Composable
+private fun CreateSongScreen(vm: AudioViewModel, onBack: () -> Unit) {
+    var lyrics by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().padding(22.dp)) {
+        BackTitle("Create Song", onBack)
+        Spacer(Modifier.height(18.dp))
+        Text("Lyrics", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = lyrics,
+            onValueChange = { lyrics = it },
+            modifier = Modifier.fillMaxWidth().height(190.dp),
+            placeholder = { Text("اكتب كلمات الأغنية هنا…") },
+            shape = RoundedCornerShape(18.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text("Style", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.height(170.dp)
+        ) {
+            items(listOf("Piano", "Acoustic", "Pop", "Lo-Fi", "Cinematic", "Traditional")) { style ->
+                FilterChip(
+                    selected = vm.state.style == style,
+                    onClick = { vm.setStyle(style) },
+                    label = { Text(style) }
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = { vm.createTextDemo(lyrics) },
+            enabled = lyrics.isNotBlank() && !vm.state.generatingMelody,
+            modifier = Modifier.fillMaxWidth().height(54.dp)
+        ) {
+            Text(if (vm.state.generatingMelody) "Creating…" else "✨ Create Song")
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrophone: () -> Unit) {
+    val state = vm.state
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val micGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    Column(Modifier.fillMaxSize().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        BackTitle("Hum a Melody", onBack)
+        Spacer(Modifier.height(26.dp))
+        Text(
+            if (state.recording) "Listening…" else if (state.generatingMelody) "Creating melody…" else "Hum your idea",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(28.dp))
+        Card(Modifier.fillMaxWidth().height(150.dp), shape = RoundedCornerShape(24.dp)) {
+            Box(Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
+                Wave(state.level, Modifier.fillMaxWidth().height(100.dp))
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        Text(
+            if (state.note == "—") "—" else "\${state.note}  •  \${"%.1f".format(state.hz)} Hz",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(
+            onClick = {
+                if (!micGranted) onRequestMicrophone() else vm.toggle()
+            },
+            enabled = !state.generatingMelody,
+            modifier = Modifier.size(150.dp),
+            shape = RoundedCornerShape(75.dp)
+        ) {
+            Text(if (state.recording) "STOP" else if (!micGranted) "ALLOW MIC" else "RECORD", fontSize = 16.sp)
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("أفضل نتيجة: دندن 5–15 ثواني بصوت واضح", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SongsScreen(vm: AudioViewModel, onBack: () -> Unit, onExport: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(22.dp)) {
+        BackTitle("My Songs", onBack)
+        Spacer(Modifier.height(22.dp))
+        if (vm.state.file?.exists() == true) {
+            Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(18.dp)) {
+                    Text("Latest melody", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(14.dp))
+                    Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
+                        Text("Export WAV")
                     }
                 }
             }
-        ) { padding ->
-            Box(Modifier.padding(padding).fillMaxSize()) {
-                when (tab) {
-                    0 -> CreateScreen(vm)
-                    1 -> RecordScreen(vm, onRecordClick)
-                    2 -> AnalyzeScreen(vm)
-                    3 -> ArrangeScreen(vm)
-                    4 -> ExportScreen(vm, onExportWav)
-                }
-            }
+        } else {
+            Text("Your generated melodies will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-fun CreateScreen(vm: AudioViewModel) {
-    var lyrics by remember { mutableStateOf("") }
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("Hum to Music AI", style = MaterialTheme.typography.headlineMedium)
-        Text("Simple Music Creator")
-        Spacer(Modifier.height(20.dp))
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(18.dp)) {
-                Text("✍️ Write your lyrics", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = lyrics,
-                    onValueChange = { lyrics = it },
-                    modifier = Modifier.fillMaxWidth().height(160.dp),
-                    placeholder = { Text("اكتب كلمات الأغنية هنا…") }
-                )
-                Spacer(Modifier.height(12.dp))
-                Text("Style: ${vm.state.style}")
-                Text("Demo mode: no API key required")
-                Spacer(Modifier.height(14.dp))
-                Button(
-                    onClick = { vm.generateDemoSong(lyrics) },
-                    enabled = !vm.state.demoGenerating,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (vm.state.demoGenerating) "Creating…" else "✨ Create Demo Song")
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(vm.state.demoMessage, style = MaterialTheme.typography.bodySmall)
-            }
+private fun SettingsScreen(
+    onBack: () -> Unit,
+    onRequestMicrophone: () -> Unit,
+    onOpenSystemSettings: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    Column(Modifier.fillMaxSize().padding(22.dp)) {
+        BackTitle("Settings", onBack)
+        Spacer(Modifier.height(24.dp))
+        Text("Permissions", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        SettingRow("🎙️", "Microphone", if (granted) "Allowed" else "Not allowed") {
+            onRequestMicrophone()
         }
+        Spacer(Modifier.height(10.dp))
+        Text("Android controls the actual permission dialog.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(14.dp))
+        OutlinedButton(onClick = onOpenSystemSettings, modifier = Modifier.fillMaxWidth()) {
+            Text("Open Android App Settings")
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
+        Text("v1.0.2", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
-        Text(
-            "هذا الإصدار للتجربة فقط: يعمل محلياً بلا API. لاحقاً نربط AI حقيقي للكلمات والغناء.",
-            style = MaterialTheme.typography.bodyMedium
-        )
+        Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-fun RecordScreen(vm: AudioViewModel, onRecordClick: () -> Unit) {
-    val state = vm.state
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("Hum to Music AI", style = MaterialTheme.typography.headlineMedium)
-        Text("v1.0.1 • Hum-to-Music & AI Arranger")
-        Spacer(Modifier.height(30.dp))
-        Wave(state.level, Modifier.fillMaxWidth().height(100.dp))
-        Spacer(Modifier.height(30.dp))
-        Text(if (state.recording) "Recording… ${state.seconds}s" else "Ready to record")
-        Spacer(Modifier.height(18.dp))
-        Button(onClick = onRecordClick, modifier = Modifier.size(150.dp)) {
-            Text(if (state.recording) "STOP" else "RECORD")
+private fun SettingRow(icon: String, title: String, status: String, onClick: () -> Unit) {
+    Card(Modifier.fillMaxWidth().clickable { onClick() }, shape = RoundedCornerShape(18.dp)) {
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 24.sp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            Text("›", fontSize = 26.sp)
         }
-        Spacer(Modifier.height(20.dp))
-        Text(
-            if (state.note == "—") "Sing or hum a melody"
-            else "Detected: ${state.note} • ${"%.1f".format(state.hz)} Hz"
-        )
     }
 }
 
 @Composable
-fun Wave(level: Float, modifier: Modifier) {
+private fun BackTitle(title: String, onBack: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("‹", fontSize = 34.sp, modifier = Modifier.clickable { onBack() })
+        Spacer(Modifier.width(8.dp))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun Wave(level: Float, modifier: Modifier) {
     val waveColor = MaterialTheme.colorScheme.primary
     Canvas(modifier) {
         val path = Path()
@@ -416,80 +672,9 @@ fun Wave(level: Float, modifier: Modifier) {
         path.moveTo(0f, mid)
         for (i in 0..100) {
             val x = size.width * i / 100f
-            val y = mid + kotlin.math.sin(i * .5f) * level * size.height * .4f
+            val y = mid + sin(i * .5f) * level * size.height * .4f
             path.lineTo(x, y)
         }
-        drawPath(
-            path = path,
-            color = waveColor,
-            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
-        )
-    }
-}
-
-@Composable
-fun AnalyzeScreen(vm: AudioViewModel) {
-    val state = vm.state
-    Column(Modifier.padding(24.dp)) {
-        Text("Analysis", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(20.dp))
-        Card {
-            Column(Modifier.padding(20.dp)) {
-                Text("Detected note: ${state.note}")
-                Text("Frequency: ${"%.1f".format(state.hz)} Hz")
-                Text("BPM: Auto analysis ready")
-                Text("Key: Pending multi-note analysis")
-                Text("Chords: Pending AI analysis")
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Text("The v1 engine uses lightweight on-device pitch detection. The full AI arranger is prepared for the next engine integration.")
-    }
-}
-
-@Composable
-fun ArrangeScreen(vm: AudioViewModel) {
-    val styles = listOf("Acoustic", "Piano", "Pop", "Lo-Fi", "Cinematic", "Traditional")
-    Column(Modifier.padding(24.dp)) {
-        Text("Arrange", style = MaterialTheme.typography.headlineMedium)
-        Text("Choose an arrangement style")
-        Spacer(Modifier.height(16.dp))
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(styles) { style ->
-                Card(onClick = { vm.setStyle(style) }) {
-                    Box(
-                        Modifier.padding(22.dp).fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(if (vm.state.style == style) "✓ $style" else style)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ExportScreen(vm: AudioViewModel, onExportWav: () -> Unit) {
-    Column(Modifier.padding(24.dp)) {
-        Text("Export", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(20.dp))
-        Text("Current style: ${vm.state.style}")
-        Spacer(Modifier.height(20.dp))
-        Button(onClick = onExportWav, enabled = vm.state.file?.exists() == true) {
-            Text("Export WAV")
-        }
-        Spacer(Modifier.height(10.dp))
-        Button(onClick = {}, enabled = false) {
-            Text("Export MIDI — next engine")
-        }
-        Spacer(Modifier.height(10.dp))
-        Button(onClick = {}, enabled = false) {
-            Text("Chord Sheet — next engine")
-        }
+        drawPath(path = path, color = waveColor, style = Stroke(width = 3f))
     }
 }
