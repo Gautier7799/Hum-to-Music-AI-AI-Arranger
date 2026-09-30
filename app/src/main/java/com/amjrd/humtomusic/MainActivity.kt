@@ -366,13 +366,15 @@ class AudioViewModel : ViewModel() {
             index to (values.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key)
         }
 
+        // Preserve real melodic movement. Only replace an isolated one-semitone
+        // glitch when both surrounding buckets agree on the same note.
         val smoothed = raw.mapIndexed { i, (_, value) ->
             if (value == null) null
-            else {
-                val neighbours = (maxOf(0, i - 1)..minOf(raw.lastIndex, i + 1))
-                    .mapNotNull { raw[it].second }
-                neighbours.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: value
-            }
+            else if (i > 0 && i < raw.lastIndex) {
+                val previous = raw[i - 1].second
+                val next = raw[i + 1].second
+                if (previous != null && previous == next && abs(value - previous) <= 1) previous else value
+            } else value
         }
 
         val result = mutableListOf<MelodyNote>()
@@ -676,15 +678,7 @@ class AudioViewModel : ViewModel() {
     fun setSound(sound: String) { state = state.copy(sound = sound) }
     fun setKey(key: String) { state = state.copy(key = key) }
     fun setScale(scale: String) { state = state.copy(scale = scale) }
-    fun setChord(chord: String) { state = state.copy(chord = chord) }
-
-    override fun onCleared() {
-        stop()
-        job?.cancel()
-        super.onCleared()
-    }
-
-    private fun pitch(samples: ShortArray, count: Int): Float {
+     private fun pitch(samples: ShortArray, count: Int): Float {
         if (count < 512) return 0f
 
         var energy = 0.0
@@ -695,12 +689,16 @@ class AudioViewModel : ViewModel() {
         val rms = kotlin.math.sqrt(energy / count) / 32768.0
         if (rms < 0.015) return 0f
 
+        // Use the strongest *early* autocorrelation peak instead of simply taking
+        // the global maximum. Global maxima often lock onto a harmonic/subharmonic
+        // and can make different hums collapse to the same note.
         val window = minOf(count, 2048)
         val minLag = (rate / 1000f).roundToInt().coerceAtLeast(1)
         val maxLag = (rate / 70f).roundToInt().coerceAtMost(window - 2)
 
-        var bestLag = -1
+        val correlations = DoubleArray(maxLag + 1)
         var bestCorrelation = 0.0
+
         for (lag in minLag..maxLag) {
             var sum = 0.0
             var energyA = 0.0
@@ -716,22 +714,40 @@ class AudioViewModel : ViewModel() {
             val denominator = kotlin.math.sqrt(energyA * energyB)
             if (denominator > 0.0) {
                 val correlation = sum / denominator
-                if (correlation > bestCorrelation) {
-                    bestCorrelation = correlation
-                    bestLag = lag
-                }
+                correlations[lag] = correlation
+                if (correlation > bestCorrelation) bestCorrelation = correlation
             }
         }
 
-        if (bestLag > 0 && bestCorrelation >= 0.55) {
-            val hz = rate.toFloat() / bestLag
-            if (hz in 70f..1000f) return hz
+        if (bestCorrelation >= 0.45) {
+            val threshold = maxOf(0.45, bestCorrelation * 0.82)
+            var selectedLag = -1
+
+            for (lag in (minLag + 1) until maxLag) {
+                val value = correlations[lag]
+                if (value >= threshold &&
+                    value >= correlations[lag - 1] &&
+                    value >= correlations[lag + 1]
+                ) {
+                    selectedLag = lag
+                    break
+                }
+            }
+
+            if (selectedLag < 0) {
+                selectedLag = (minLag..maxLag).maxByOrNull { correlations[it] } ?: -1
+            }
+
+            if (selectedLag > 0) {
+                val hz = rate.toFloat() / selectedLag
+                if (hz in 70f..1000f) return hz
+            }
         }
 
-        var crossings = 0
-        var previous = samples[0]
-        for (i in 1 until count) {
-            if ((previous < 0 && samples[i] >= 0) || (previous >= 0 && samples[i] < 0)) crossings++
+        return 0f
+    }
+
+sings++
             previous = samples[i]
         }
         val hz = crossings * rate / (2f * count)
@@ -855,7 +871,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.4.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.5.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -1187,7 +1203,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.4.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.5.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
