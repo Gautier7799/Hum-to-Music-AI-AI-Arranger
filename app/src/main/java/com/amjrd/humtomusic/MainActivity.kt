@@ -992,7 +992,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.6.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.7.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -1326,7 +1326,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.6.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.7.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
