@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, v1.1-hum-to-melody]
   workflow_dispatch:
 
 jobs:
