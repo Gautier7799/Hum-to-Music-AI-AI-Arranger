@@ -432,7 +432,7 @@ class AudioViewModel : ViewModel() {
     ) {
         if (notes.isEmpty()) return
 
-        // v1.4: render the hummed melody as the lead of a generated arrangement.
+        // v1.6: render the hummed melody as the lead of a structured local arrangement.
         // The hum supplies the idea; accompaniment is generated independently on-device.
         val samplesPerNote = notes.map {
             (rate * it.durationMs / 1000.0).roundToInt().coerceAtLeast(1)
@@ -872,6 +872,7 @@ fun HumToMusicApp(
         "record" -> RecordScreen(vm, microphoneGranted, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone, onCreateMusicAi = { screen = "create" })
         "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav, onPlayAudio, onStopAudio)
         "settings" -> SettingsScreen(
+            microphoneGranted = microphoneGranted,
             onBack = { screen = "home" },
             onRequestMicrophone = onRequestMicrophone,
             onOpenSystemSettings = onOpenSystemSettings
@@ -911,7 +912,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.5.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.6.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -1221,19 +1222,18 @@ private fun SongsScreen(vm: AudioViewModel, onBack: () -> Unit, onExport: () -> 
 
 @Composable
 private fun SettingsScreen(
+    microphoneGranted: Boolean,
     onBack: () -> Unit,
     onRequestMicrophone: () -> Unit,
     onOpenSystemSettings: () -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
     Column(Modifier.fillMaxSize().padding(22.dp)) {
         BackTitle("Settings", onBack)
         Spacer(Modifier.height(24.dp))
         Text("Permissions", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
-        SettingRow("🎙️", "Microphone", if (granted) "Allowed" else "Not allowed") {
+        SettingRow("🎙️", "Microphone", if (microphoneGranted) "Allowed" else "Not allowed") {
             onRequestMicrophone()
         }
         Spacer(Modifier.height(10.dp))
@@ -1246,7 +1246,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.5.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.6.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
