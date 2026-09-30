@@ -318,7 +318,7 @@ fun Wave(level: Float, modifier: Modifier) {
             val y = mid + kotlin.math.sin(i * .5f) * level * size.height * .4f
             path.lineTo(x, y)
         }
-        drawPath(path, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
+        drawPath(path = path, color = MaterialTheme.colorScheme.primary, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f))
     }
 }
 
