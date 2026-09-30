@@ -18,6 +18,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyRowItems
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -611,17 +613,28 @@ private fun CreateSongScreen(
     LaunchedEffect(importedLyrics) {
         if (importedLyrics.isNotBlank() && importedLyrics != lyrics) lyrics = importedLyrics
     }
+
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scrollState = rememberScrollState()
     val genres = listOf("Pop", "Rock", "Ballad", "R&B", "Hip-Hop", "EDM", "Jazz", "Blues", "Classical", "Ambient", "Lo-Fi", "Cinematic", "Folk", "Country", "Reggae", "Latin", "Traditional")
     val sounds = listOf("Piano", "Acoustic Guitar", "Electric Guitar", "Bass", "Strings", "Synth", "Drums", "Orchestra")
     val keys = listOf("C", "D", "E", "F", "G", "A", "B")
     val scales = listOf("Major", "Minor")
     val chords = listOf("C", "G", "Am", "F", "Dm", "Em", "E", "A")
 
-    Column(Modifier.fillMaxSize().padding(22.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 20.dp, vertical = 12.dp)
+    ) {
         BackTitle("Create Song", onBack)
-        Spacer(Modifier.height(18.dp))
-        Text("Lyrics", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Create your music",
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(16.dp))
+
+        Text("1  •  Lyrics", fontSize = 19.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Box {
             OutlinedTextField(
@@ -647,81 +660,145 @@ private fun CreateSongScreen(
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text("Google Keep: Share → Hum to Music AI  •  أو Import من ملفات الهاتف", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Google Keep: Share → Hum to Music AI  •  أو Import من ملفات الهاتف",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
-        Spacer(Modifier.height(16.dp))
-        Text("Genre", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(22.dp))
+        Text("2  •  Music style", fontSize = 19.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
+        Text("Genre", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.height(210.dp)
+            modifier = Modifier.fillMaxWidth().height(210.dp)
         ) {
             items(genres.size) { index ->
                 val genre = genres[index]
-                FilterChip(selected = vm.state.style == genre, onClick = { vm.setStyle(genre) }, label = { Text(genre) })
+                FilterChip(
+                    selected = vm.state.style == genre,
+                    onClick = { vm.setStyle(genre) },
+                    label = { Text(genre) },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-        Text("Sound / Instrument", fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(18.dp))
+        Text("Sound / Instrument", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             lazyRowItems(sounds) { sound ->
-                FilterChip(selected = vm.state.sound == sound, onClick = { vm.setSound(sound) }, label = { Text(sound) })
+                FilterChip(
+                    selected = vm.state.sound == sound,
+                    onClick = { vm.setSound(sound) },
+                    label = { Text(sound) }
+                )
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-        Text("Western Music", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(22.dp))
+        Text("3  •  Musical settings", fontSize = 19.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
-        Text("Key", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            lazyRowItems(keys) { key ->
-                FilterChip(selected = vm.state.key == key, onClick = { vm.setKey(key) }, label = { Text(key) })
-            }
-        }
-        Spacer(Modifier.height(7.dp))
-        Text("Scale", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            scales.forEach { scale ->
-                FilterChip(selected = vm.state.scale == scale, onClick = { vm.setScale(scale) }, label = { Text(scale) })
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text("Chord", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            lazyRowItems(chords) { chord ->
-                FilterChip(selected = vm.state.chord == chord, onClick = { vm.setChord(chord) }, label = { Text(chord) })
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Key", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    lazyRowItems(keys) { key ->
+                        FilterChip(
+                            selected = vm.state.key == key,
+                            onClick = { vm.setKey(key) },
+                            label = { Text(key) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Scale", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    scales.forEach { scale ->
+                        FilterChip(
+                            selected = vm.state.scale == scale,
+                            onClick = { vm.setScale(scale) },
+                            label = { Text(scale) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Chord", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    lazyRowItems(chords) { chord ->
+                        FilterChip(
+                            selected = vm.state.chord == chord,
+                            onClick = { vm.setChord(chord) },
+                            label = { Text(chord) }
+                        )
+                    }
+                }
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+        Spacer(Modifier.height(22.dp))
+        Text("4  •  Generate", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
             Column(Modifier.padding(16.dp)) {
-                Text("🤖 AI Sound Generation", fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(4.dp))
-                Text("الواجهة جاهزة للـAI generation. حاليًا Demo محلي بدون API key.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("🤖 AI Music Generation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    "Demo mode الآن — لا يحتاج API key. لاحقًا نفس الزر يشتغل مع AI الحقيقي.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         Spacer(Modifier.height(12.dp))
         Button(
             onClick = { vm.createTextDemo(lyrics) },
             enabled = !vm.state.generatingMelody,
-            modifier = Modifier.fillMaxWidth().height(54.dp)
+            modifier = Modifier.fillMaxWidth().height(58.dp),
+            shape = RoundedCornerShape(18.dp)
         ) {
-            Text(if (vm.state.generatingMelody) "Creating…" else "✨ Create Sound")
+            Text(
+                if (vm.state.generatingMelody) "Creating…" else "✨  CREATE SOUND",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
-        Spacer(Modifier.height(10.dp))
+
         if (vm.state.file?.exists() == true && !vm.state.generatingMelody) {
+            Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPlayAudio, modifier = Modifier.weight(1f)) { Text("▶ Play") }
-                OutlinedButton(onClick = onStopAudio, modifier = Modifier.weight(1f)) { Text("■ Stop") }
+                OutlinedButton(onClick = onPlayAudio, modifier = Modifier.weight(1f)) {
+                    Text("▶  Play")
+                }
+                OutlinedButton(onClick = onStopAudio, modifier = Modifier.weight(1f)) {
+                    Text("■  Stop")
+                }
             }
         }
+
         Spacer(Modifier.height(10.dp))
-        Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text(
+            vm.state.message,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(24.dp))
     }
 }
 
