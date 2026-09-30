@@ -678,6 +678,7 @@ class AudioViewModel : ViewModel() {
     fun setSound(sound: String) { state = state.copy(sound = sound) }
     fun setKey(key: String) { state = state.copy(key = key) }
     fun setScale(scale: String) { state = state.copy(scale = scale) }
+    fun setChord(chord: String) { state = state.copy(chord = chord) }
      private fun pitch(samples: ShortArray, count: Int): Float {
         if (count < 512) return 0f
 
@@ -745,13 +746,6 @@ class AudioViewModel : ViewModel() {
         }
 
         return 0f
-    }
-
-sings++
-            previous = samples[i]
-        }
-        val hz = crossings * rate / (2f * count)
-        return if (hz in 70f..1000f && rms >= 0.01) hz else 0f
     }
 
     private fun hzToMidi(hz: Float): Int? {
