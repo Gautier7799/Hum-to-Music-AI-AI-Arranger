@@ -29,7 +29,9 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
+import kotlin.math.PI
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
     private val permission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -52,7 +54,7 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onExportWav = {
-                    currentViewModel.state.file?.takeIf { it.exists() }?.let { file ->
+                    currentViewModel.state.file?.takeIf { it.exists() }?.let {
                         saveWav.launch("hum-to-music.wav")
                     }
                 }
@@ -77,7 +79,9 @@ data class UiState(
     val note: String = "—",
     val hz: Float = 0f,
     val style: String = "Acoustic",
-    val file: File? = null
+    val file: File? = null,
+    val demoGenerating: Boolean = false,
+    val demoMessage: String = "Demo mode — no API key required"
 )
 
 class AudioViewModel : ViewModel() {
@@ -102,7 +106,11 @@ class AudioViewModel : ViewModel() {
             AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(4096)
 
-        val created = File.createTempFile("hum_", ".wav")
+        val created = try {
+            File.createTempFile("hum_", ".wav")
+        } catch (_: Exception) {
+            return
+        }
         output = created
 
         try {
@@ -186,6 +194,52 @@ class AudioViewModel : ViewModel() {
         state = state.copy(style = style)
     }
 
+    fun generateDemoSong(lyrics: String) {
+        if (state.demoGenerating) return
+        val text = lyrics.trim()
+        if (text.isEmpty()) {
+            state = state.copy(demoMessage = "اكتب كلمات الأغنية أولاً")
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) {
+                state = state.copy(
+                    demoGenerating = true,
+                    demoMessage = "Creating a local demo melody…"
+                )
+            }
+
+            val file = File.createTempFile("demo_song_", ".wav")
+            createDemoWav(file, text)
+
+            withContext(Dispatchers.Main) {
+                state = state.copy(
+                    demoGenerating = false,
+                    file = file,
+                    demoMessage = "Demo ready — local melody, no API key"
+                )
+            }
+        }
+    }
+
+    private fun createDemoWav(file: File, text: String) {
+        val durationSeconds = 12
+        val totalSamples = rate * durationSeconds
+        val notes = intArrayOf(261, 294, 330, 392, 330, 294, 261, 220)
+        FileOutputStream(file).use { out ->
+            writeWavHeader(out, totalSamples * 2)
+            for (i in 0 until totalSamples) {
+                val noteIndex = ((i.toLong() * notes.size) / totalSamples).toInt()
+                val frequency = notes[noteIndex.coerceIn(0, notes.lastIndex)].toDouble()
+                val envelope = if (text.length % 2 == 0) 0.16 else 0.12
+                val sample = (sin(2.0 * PI * frequency * i / rate) * 32767.0 * envelope).toInt()
+                out.write(sample and 255)
+                out.write((sample shr 8) and 255)
+            }
+        }
+    }
+
     override fun onCleared() {
         stop()
         job?.cancel()
@@ -256,14 +310,16 @@ fun HumToMusicApp(
 ) {
     MaterialTheme {
         var tab by remember { mutableIntStateOf(0) }
+        val titles = listOf("Create", "Record", "Analyze", "Arrange", "Export")
+        val icons = listOf("✦", "●", "♫", "♪", "⇩")
         Scaffold(
             bottomBar = {
                 NavigationBar {
-                    listOf("Record", "Analyze", "Arrange", "Export").forEachIndexed { index, title ->
+                    titles.forEachIndexed { index, title ->
                         NavigationBarItem(
                             selected = tab == index,
                             onClick = { tab = index },
-                            icon = { Text(listOf("●", "♫", "♪", "⇩")[index]) },
+                            icon = { Text(icons[index]) },
                             label = { Text(title) }
                         )
                     }
@@ -272,13 +328,57 @@ fun HumToMusicApp(
         ) { padding ->
             Box(Modifier.padding(padding).fillMaxSize()) {
                 when (tab) {
-                    0 -> RecordScreen(vm, onRecordClick)
-                    1 -> AnalyzeScreen(vm)
-                    2 -> ArrangeScreen(vm)
-                    3 -> ExportScreen(vm, onExportWav)
+                    0 -> CreateScreen(vm)
+                    1 -> RecordScreen(vm, onRecordClick)
+                    2 -> AnalyzeScreen(vm)
+                    3 -> ArrangeScreen(vm)
+                    4 -> ExportScreen(vm, onExportWav)
                 }
             }
         }
+    }
+}
+
+@Composable
+fun CreateScreen(vm: AudioViewModel) {
+    var lyrics by remember { mutableStateOf("") }
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("Hum to Music AI", style = MaterialTheme.typography.headlineMedium)
+        Text("Simple Music Creator")
+        Spacer(Modifier.height(20.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp)) {
+                Text("✍️ Write your lyrics", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = lyrics,
+                    onValueChange = { lyrics = it },
+                    modifier = Modifier.fillMaxWidth().height(160.dp),
+                    placeholder = { Text("اكتب كلمات الأغنية هنا…") }
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("Style: ${vm.state.style}")
+                Text("Demo mode: no API key required")
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = { vm.generateDemoSong(lyrics) },
+                    enabled = !vm.state.demoGenerating,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (vm.state.demoGenerating) "Creating…" else "✨ Create Demo Song")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(vm.state.demoMessage, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "هذا الإصدار للتجربة فقط: يعمل محلياً بلا API. لاحقاً نربط AI حقيقي للكلمات والغناء.",
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 
