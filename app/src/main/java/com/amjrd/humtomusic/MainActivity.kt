@@ -161,7 +161,11 @@ data class UiState(
     val level: Float = 0f,
     val note: String = "—",
     val hz: Float = 0f,
-    val style: String = "Piano",
+    val style: String = "Pop",
+    val sound: String = "Piano",
+    val key: String = "C",
+    val scale: String = "Major",
+    val chord: String = "C",
     val file: File? = null,
     val message: String = "Ready — hum a melody"
 )
@@ -330,9 +334,12 @@ class AudioViewModel : ViewModel() {
         return simplified.take(32)
     }
 
-    private fun createMelodyWav(file: File, notes: List<Int>, style: String) {
+    private fun createMelodyWav(file: File, notes: List<Int>, style: String, sound: String = "Piano", key: String = "C", scale: String = "Major", chord: String = "C") {
         val samplesPerNote = (rate * 0.42).toInt()
         val totalSamples = samplesPerNote * notes.size
+        val keySemitones = mapOf("C" to 0, "D" to 2, "E" to 4, "F" to 5, "G" to 7, "A" to 9, "B" to 11)
+        val root = keySemitones[key] ?: 0
+        val chordIntervals = if (chord in listOf("Am", "Dm", "Em")) listOf(0, 3, 7) else listOf(0, 4, 7)
 
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
@@ -376,7 +383,7 @@ class AudioViewModel : ViewModel() {
                 it + if (seed % 3 == 0) 0 else 0
             }
             val file = File.createTempFile("text_demo_", ".wav")
-            createMelodyWav(file, notes, state.style)
+            createMelodyWav(file, notes, state.style, state.sound, state.key, state.scale, state.chord)
             withContext(Dispatchers.Main) {
                 state = state.copy(
                     generatingMelody = false,
@@ -390,6 +397,11 @@ class AudioViewModel : ViewModel() {
     fun setStyle(style: String) {
         state = state.copy(style = style)
     }
+
+    fun setSound(sound: String) { state = state.copy(sound = sound) }
+    fun setKey(key: String) { state = state.copy(key = key) }
+    fun setScale(scale: String) { state = state.copy(scale = scale) }
+    fun setChord(chord: String) { state = state.copy(chord = chord) }
 
     override fun onCleared() {
         stop()
