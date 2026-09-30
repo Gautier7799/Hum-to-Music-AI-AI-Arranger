@@ -567,6 +567,12 @@ private fun CreateSongScreen(
         if (importedLyrics.isNotBlank() && importedLyrics != lyrics) lyrics = importedLyrics
     }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val genres = listOf("Pop", "Rock", "Ballad", "R&B", "Hip-Hop", "EDM", "Jazz", "Blues", "Classical", "Ambient", "Lo-Fi", "Cinematic", "Folk", "Country", "Reggae", "Latin", "Traditional")
+    val sounds = listOf("Piano", "Acoustic Guitar", "Electric Guitar", "Bass", "Strings", "Synth", "Drums", "Orchestra")
+    val keys = listOf("C", "D", "E", "F", "G", "A", "B")
+    val scales = listOf("Major", "Minor")
+    val chords = listOf("C", "G", "Am", "F", "Dm", "Em", "E", "A")
+
     Column(Modifier.fillMaxSize().padding(22.dp)) {
         BackTitle("Create Song", onBack)
         Spacer(Modifier.height(18.dp))
@@ -592,33 +598,65 @@ private fun CreateSongScreen(
                     },
                     label = { Text("📋 Paste") }
                 )
-                AssistChip(
-                    onClick = onImportLyrics,
-                    label = { Text("📂 Import") }
-                )
+                AssistChip(onClick = onImportLyrics, label = { Text("📂 Import") })
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(
-            "Google Keep: Share → Hum to Music AI  •  أو Import من ملفات الهاتف",
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Text("Google Keep: Share → Hum to Music AI  •  أو Import من ملفات الهاتف", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
         Spacer(Modifier.height(16.dp))
-        Text("Style", fontWeight = FontWeight.SemiBold)
+        Text("Genre", fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.height(170.dp)
+            modifier = Modifier.height(210.dp)
         ) {
-            items(listOf("Piano", "Acoustic", "Pop", "Lo-Fi", "Cinematic", "Traditional")) { style ->
-                FilterChip(
-                    selected = vm.state.style == style,
-                    onClick = { vm.setStyle(style) },
-                    label = { Text(style) }
-                )
+            items(genres) { genre ->
+                FilterChip(selected = vm.state.style == genre, onClick = { vm.setStyle(genre) }, label = { Text(genre) })
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Text("Sound / Instrument", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(sounds) { sound ->
+                FilterChip(selected = vm.state.sound == sound, onClick = { vm.setSound(sound) }, label = { Text(sound) })
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Text("Western Music", fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Text("Key", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            items(keys) { key ->
+                FilterChip(selected = vm.state.key == key, onClick = { vm.setKey(key) }, label = { Text(key) })
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+        Text("Scale", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            scales.forEach { scale ->
+                FilterChip(selected = vm.state.scale == scale, onClick = { vm.setScale(scale) }, label = { Text(scale) })
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Chord", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            items(chords) { chord ->
+                FilterChip(selected = vm.state.chord == chord, onClick = { vm.setChord(chord) }, label = { Text(chord) })
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("🤖 AI Sound Generation", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(4.dp))
+                Text("الواجهة جاهزة للـAI generation. حاليًا Demo محلي بدون API key.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -627,7 +665,7 @@ private fun CreateSongScreen(
             enabled = lyrics.isNotBlank() && !vm.state.generatingMelody,
             modifier = Modifier.fillMaxWidth().height(54.dp)
         ) {
-            Text(if (vm.state.generatingMelody) "Creating…" else "✨ Create Song")
+            Text(if (vm.state.generatingMelody) "Creating…" else "✨ Generate Sound")
         }
         Spacer(Modifier.height(10.dp))
         Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
@@ -736,7 +774,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.0.3", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.0.4", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
