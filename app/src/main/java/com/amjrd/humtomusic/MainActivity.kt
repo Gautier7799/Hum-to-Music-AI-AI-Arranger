@@ -460,11 +460,13 @@ class AudioViewModel : ViewModel() {
 @Composable
 fun HumToMusicApp(
     vm: AudioViewModel,
+    importedLyrics: String,
+    onImportLyrics: () -> Unit,
     onRequestMicrophone: () -> Unit,
     onOpenSystemSettings: () -> Unit,
     onExportWav: () -> Unit
 ) {
-    var screen by remember { mutableStateOf("home") }
+    var screen by remember { mutableStateOf(if (importedLyrics.isNotBlank()) "create" else "home") }
 
     when (screen) {
         "home" -> HomeScreen(
@@ -475,8 +477,8 @@ fun HumToMusicApp(
             onSongs = { screen = "songs" },
             onSettings = { screen = "settings" }
         )
-        "create" -> CreateSongScreen(vm, onBack = { screen = "home" })
-        "record" -> RecordScreen(vm, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone)
+        "create" -> CreateSongScreen(vm, importedLyrics, onImportLyrics, onBack = { screen = "home" })
+        "record" -> RecordScreen(vm, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone, onCreateMusicAi = { screen = "create" })
         "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav)
         "settings" -> SettingsScreen(
             onBack = { screen = "home" },
@@ -518,7 +520,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.0.2 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.0.3 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -542,19 +544,53 @@ private fun HomeAction(icon: String, title: String, subtitle: String, onClick: (
 }
 
 @Composable
-private fun CreateSongScreen(vm: AudioViewModel, onBack: () -> Unit) {
-    var lyrics by remember { mutableStateOf("") }
+private fun CreateSongScreen(
+    vm: AudioViewModel,
+    importedLyrics: String,
+    onImportLyrics: () -> Unit,
+    onBack: () -> Unit
+) {
+    var lyrics by remember { mutableStateOf(importedLyrics) }
+    LaunchedEffect(importedLyrics) {
+        if (importedLyrics.isNotBlank() && importedLyrics != lyrics) lyrics = importedLyrics
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current
     Column(Modifier.fillMaxSize().padding(22.dp)) {
         BackTitle("Create Song", onBack)
         Spacer(Modifier.height(18.dp))
         Text("Lyrics", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = lyrics,
-            onValueChange = { lyrics = it },
-            modifier = Modifier.fillMaxWidth().height(190.dp),
-            placeholder = { Text("اكتب كلمات الأغنية هنا…") },
-            shape = RoundedCornerShape(18.dp)
+        Box {
+            OutlinedTextField(
+                value = lyrics,
+                onValueChange = { lyrics = it },
+                modifier = Modifier.fillMaxWidth().height(190.dp),
+                placeholder = { Text("اكتب كلمات الأغنية هنا…") },
+                shape = RoundedCornerShape(18.dp)
+            )
+            Row(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AssistChip(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+                        if (!text.isNullOrBlank()) lyrics = text
+                    },
+                    label = { Text("📋 Paste") }
+                )
+                AssistChip(
+                    onClick = onImportLyrics,
+                    label = { Text("📂 Import") }
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Google Keep: Share → Hum to Music AI  •  أو Import من ملفات الهاتف",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(16.dp))
         Text("Style", fontWeight = FontWeight.SemiBold)
@@ -587,7 +623,7 @@ private fun CreateSongScreen(vm: AudioViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrophone: () -> Unit) {
+private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrophone: () -> Unit, onCreateMusicAi: () -> Unit) {
     val state = vm.state
     val context = androidx.compose.ui.platform.LocalContext.current
     val micGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -627,6 +663,15 @@ private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrop
         }
         Spacer(Modifier.height(18.dp))
         Text("أفضل نتيجة: دندن 5–15 ثواني بصوت واضح", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (state.file?.exists() == true && !state.recording && !state.generatingMelody) {
+            Spacer(Modifier.height(14.dp))
+            OutlinedButton(
+                onClick = onCreateMusicAi,
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) {
+                Text("🎵  Create Music AI")
+            }
+        }
     }
 }
 
@@ -679,7 +724,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.0.2", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.0.3", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
