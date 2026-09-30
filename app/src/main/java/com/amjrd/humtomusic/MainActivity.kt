@@ -213,6 +213,7 @@ class AudioViewModel : ViewModel() {
     private val recording = AtomicBoolean(false)
     private val rate = 44100
     private val melodyFrames = mutableListOf<Pair<Long, Int>>()
+    private var lastHumNotes: List<MelodyNote> = emptyList()
 
     fun toggle() {
         if (recording.get()) stop() else start()
@@ -338,6 +339,7 @@ class AudioViewModel : ViewModel() {
         withContext(Dispatchers.IO) {
             val notes = compressMelody(frames)
             if (notes.isEmpty()) return@withContext
+            lastHumNotes = notes
             val melodyFile = File.createTempFile("melody_", ".wav")
             createMelodyWav(melodyFile, notes, state.style, state.sound, state.key, state.scale, state.chord)
             withContext(Dispatchers.Main) {
@@ -345,6 +347,7 @@ class AudioViewModel : ViewModel() {
                     generatingMelody = false,
                     file = melodyFile,
                     message = "Music ready — your hum + generated arrangement"
+                )
                 )
             }
         }
@@ -644,6 +647,39 @@ class AudioViewModel : ViewModel() {
         }
 
         return kick * 0.55 + snare * 0.35 + hat
+    }
+
+    fun createSound(lyrics: String) {
+        if (lastHumNotes.isNotEmpty()) {
+            regenerateHumArrangement()
+        } else {
+            createTextDemo(lyrics)
+        }
+    }
+
+    private fun regenerateHumArrangement() {
+        val notes = lastHumNotes
+        if (notes.isEmpty()) return
+        state = state.copy(generatingMelody = true, message = "Creating your arrangement…")
+        viewModelScope.launch(Dispatchers.IO) {
+            val melodyFile = File.createTempFile("melody_", ".wav")
+            createMelodyWav(
+                melodyFile,
+                notes,
+                state.style,
+                state.sound,
+                state.key,
+                state.scale,
+                state.chord
+            )
+            withContext(Dispatchers.Main) {
+                state = state.copy(
+                    generatingMelody = false,
+                    file = melodyFile,
+                    message = "Music ready — arrangement built from your hum"
+                )
+            }
+        }
     }
 
     fun createTextDemo(lyrics: String) {
@@ -1056,7 +1092,7 @@ private fun CreateSongScreen(
         }
         Spacer(Modifier.height(12.dp))
         Button(
-            onClick = { vm.createTextDemo(lyrics) },
+            onClick = { vm.createSound(lyrics) },
             enabled = !vm.state.generatingMelody,
             modifier = Modifier.fillMaxWidth().height(58.dp),
             shape = RoundedCornerShape(18.dp)
