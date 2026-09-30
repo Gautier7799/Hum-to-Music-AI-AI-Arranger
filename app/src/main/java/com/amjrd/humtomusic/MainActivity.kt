@@ -748,3 +748,464 @@ class AudioViewModel : ViewModel() {
         intAt(40, size)
         out.write(header)
     }
+
+    private fun rewriteSize(file: File, dataSize: Int) {
+        val bytes = file.readBytes()
+        fun setInt(position: Int, value: Int) {
+            bytes[position] = (value and 255).toByte()
+            bytes[position + 1] = (value shr 8 and 255).toByte()
+            bytes[position + 2] = (value shr 16 and 255).toByte()
+            bytes[position + 3] = (value shr 24 and 255).toByte()
+        }
+        setInt(4, dataSize + 36)
+        setInt(40, dataSize)
+        file.writeBytes(bytes)
+    }
+}
+
+@Composable
+fun HumToMusicApp(
+    vm: AudioViewModel,
+    importedLyrics: String,
+    onImportLyrics: () -> Unit,
+    onRequestMicrophone: () -> Unit,
+    onOpenSystemSettings: () -> Unit,
+    onExportWav: () -> Unit,
+    onPlayAudio: () -> Unit,
+    onStopAudio: () -> Unit
+) {
+    var screen by remember { mutableStateOf(if (importedLyrics.isNotBlank()) "create" else "home") }
+
+    LaunchedEffect(importedLyrics) {
+        if (importedLyrics.isNotBlank()) screen = "create"
+    }
+
+    when (screen) {
+        "home" -> HomeScreen(
+            vm = vm,
+            onCreate = { screen = "create" },
+            onHum = { screen = "record" },
+            onInstrumental = { screen = "create" },
+            onSongs = { screen = "songs" },
+            onSettings = { screen = "settings" }
+        )
+        "create" -> CreateSongScreen(vm, importedLyrics, onImportLyrics, onBack = { screen = "home" }, onPlayAudio = onPlayAudio, onStopAudio = onStopAudio)
+        "record" -> RecordScreen(vm, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone, onCreateMusicAi = { screen = "create" })
+        "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav, onPlayAudio, onStopAudio)
+        "settings" -> SettingsScreen(
+            onBack = { screen = "home" },
+            onRequestMicrophone = onRequestMicrophone,
+            onOpenSystemSettings = onOpenSystemSettings
+        )
+    }
+}
+
+@Composable
+private fun HomeScreen(
+    vm: AudioViewModel,
+    onCreate: () -> Unit,
+    onHum: () -> Unit,
+    onInstrumental: () -> Unit,
+    onSongs: () -> Unit,
+    onSettings: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column {
+                Text("Hum to Music AI", fontSize = 25.sp, fontWeight = FontWeight.Bold)
+                Text("Turn an idea into music", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("⚙", fontSize = 25.sp, modifier = Modifier.clickable { onSettings() })
+        }
+
+        Spacer(Modifier.height(28.dp))
+        Text("What do you want to create?", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(14.dp))
+
+        HomeAction("✍️", "Create Song", "Write lyrics and build a song", onCreate)
+        HomeAction("🎙️", "Hum a Melody", "Hum your idea and turn it into music", onHum)
+        HomeAction("🎧", "Instrumental", "Start with a simple instrumental", onInstrumental)
+
+        Spacer(Modifier.height(20.dp))
+        OutlinedButton(onClick = onSongs, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("🎼  My Songs")
+        }
+
+        Spacer(Modifier.weight(1f))
+        Text("v1.0.5 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun HomeAction(icon: String, title: String, subtitle: String, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { onClick() },
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 30.sp)
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            Text("›", fontSize = 28.sp)
+        }
+    }
+}
+
+@Composable
+private fun CreateSongScreen(
+    vm: AudioViewModel,
+    importedLyrics: String,
+    onImportLyrics: () -> Unit,
+    onBack: () -> Unit,
+    onPlayAudio: () -> Unit,
+    onStopAudio: () -> Unit
+) {
+    var lyrics by remember { mutableStateOf(importedLyrics) }
+    LaunchedEffect(importedLyrics) {
+        if (importedLyrics.isNotBlank() && importedLyrics != lyrics) lyrics = importedLyrics
+    }
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scrollState = rememberScrollState()
+    val genres = listOf("Pop", "Rock", "Ballad", "R&B", "Hip-Hop", "EDM", "Jazz", "Blues", "Classical", "Ambient", "Lo-Fi", "Cinematic", "Folk", "Country", "Reggae", "Latin", "Traditional")
+    val sounds = listOf("Piano", "Acoustic Guitar", "Electric Guitar", "Bass", "Strings", "Synth", "Drums", "Orchestra")
+    val keys = listOf("C", "D", "E", "F", "G", "A", "B")
+    val scales = listOf("Major", "Minor")
+    val chords = listOf("C", "G", "Am", "F", "Dm", "Em", "E", "A")
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 20.dp, vertical = 12.dp)
+    ) {
+        BackTitle("Create Song", onBack)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Create your music",
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(16.dp))
+
+        Text("1  •  Lyrics", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Box {
+            OutlinedTextField(
+                value = lyrics,
+                onValueChange = { lyrics = it },
+                modifier = Modifier.fillMaxWidth().height(190.dp),
+                placeholder = { Text("اكتب كلمات الأغنية هنا…") },
+                shape = RoundedCornerShape(18.dp)
+            )
+            Row(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AssistChip(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val text = clipboard.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()
+                        if (!text.isNullOrBlank()) lyrics = text
+                    },
+                    label = { Text("📋 Paste") }
+                )
+                AssistChip(onClick = onImportLyrics, label = { Text("📂 Import") })
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Google Keep: Share → Hum to Music AI  •  أو Import من ملفات الهاتف",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(Modifier.height(22.dp))
+        Text("2  •  Music style", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Genre", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().height(210.dp)
+        ) {
+            items(genres.size) { index ->
+                val genre = genres[index]
+                FilterChip(
+                    selected = vm.state.style == genre,
+                    onClick = { vm.setStyle(genre) },
+                    label = { Text(genre) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+        Text("Sound / Instrument", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            lazyRowItems(sounds) { sound ->
+                FilterChip(
+                    selected = vm.state.sound == sound,
+                    onClick = { vm.setSound(sound) },
+                    label = { Text(sound) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
+        Text("3  •  Musical settings", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(Modifier.padding(14.dp)) {
+                Text("Key", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    lazyRowItems(keys) { key ->
+                        FilterChip(
+                            selected = vm.state.key == key,
+                            onClick = { vm.setKey(key) },
+                            label = { Text(key) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Scale", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    scales.forEach { scale ->
+                        FilterChip(
+                            selected = vm.state.scale == scale,
+                            onClick = { vm.setScale(scale) },
+                            label = { Text(scale) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Chord", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(5.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    lazyRowItems(chords) { chord ->
+                        FilterChip(
+                            selected = vm.state.chord == chord,
+                            onClick = { vm.setChord(chord) },
+                            label = { Text(chord) }
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
+        Text("4  •  Generate", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Text("🤖 AI Music Generation", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    "Demo mode الآن — لا يحتاج API key. لاحقًا نفس الزر يشتغل مع AI الحقيقي.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = { vm.createTextDemo(lyrics) },
+            enabled = !vm.state.generatingMelody,
+            modifier = Modifier.fillMaxWidth().height(58.dp),
+            shape = RoundedCornerShape(18.dp)
+        ) {
+            Text(
+                if (vm.state.generatingMelody) "Creating…" else "✨  CREATE SOUND",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        if (vm.state.file?.exists() == true && !vm.state.generatingMelody) {
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPlayAudio, modifier = Modifier.weight(1f)) {
+                    Text("▶  Play")
+                }
+                OutlinedButton(onClick = onStopAudio, modifier = Modifier.weight(1f)) {
+                    Text("■  Stop")
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            vm.state.message,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrophone: () -> Unit, onCreateMusicAi: () -> Unit) {
+    val state = vm.state
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val micGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    Column(Modifier.fillMaxSize().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        BackTitle("Hum a Melody", onBack)
+        Spacer(Modifier.height(26.dp))
+        Text(
+            if (state.recording) "Listening…" else if (state.generatingMelody) "Creating melody…" else "Hum your idea",
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(28.dp))
+        Card(Modifier.fillMaxWidth().height(150.dp), shape = RoundedCornerShape(24.dp)) {
+            Box(Modifier.fillMaxSize().padding(14.dp), contentAlignment = Alignment.Center) {
+                Wave(state.level, Modifier.fillMaxWidth().height(100.dp))
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        Text(
+            if (state.note == "—") "—" else "${state.note}  •  ${"%.1f".format(state.hz)} Hz",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(
+            onClick = {
+                if (!micGranted) onRequestMicrophone() else vm.toggle()
+            },
+            enabled = !state.generatingMelody,
+            modifier = Modifier.size(150.dp),
+            shape = RoundedCornerShape(75.dp)
+        ) {
+            Text(if (state.recording) "STOP" else if (!micGranted) "ALLOW MIC" else "RECORD", fontSize = 16.sp)
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("أفضل نتيجة: دندن 5–15 ثواني بصوت واضح", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (state.file?.exists() == true && !state.recording && !state.generatingMelody) {
+            Spacer(Modifier.height(14.dp))
+            OutlinedButton(
+                onClick = onCreateMusicAi,
+                modifier = Modifier.fillMaxWidth().height(52.dp)
+            ) {
+                Text("🎵  Create Music AI")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SongsScreen(vm: AudioViewModel, onBack: () -> Unit, onExport: () -> Unit, onPlayAudio: () -> Unit, onStopAudio: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(22.dp)) {
+        BackTitle("My Songs", onBack)
+        Spacer(Modifier.height(22.dp))
+        if (vm.state.file?.exists() == true) {
+            Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.padding(18.dp)) {
+                    Text("Latest melody", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text(vm.state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(14.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onPlayAudio, modifier = Modifier.weight(1f)) { Text("▶ Play") }
+                        OutlinedButton(onClick = onStopAudio, modifier = Modifier.weight(1f)) { Text("■ Stop") }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onExport, modifier = Modifier.fillMaxWidth()) {
+                        Text("Export WAV")
+                    }
+                }
+            }
+        } else {
+            Text("Your generated melodies will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    onBack: () -> Unit,
+    onRequestMicrophone: () -> Unit,
+    onOpenSystemSettings: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val granted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    Column(Modifier.fillMaxSize().padding(22.dp)) {
+        BackTitle("Settings", onBack)
+        Spacer(Modifier.height(24.dp))
+        Text("Permissions", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        SettingRow("🎙️", "Microphone", if (granted) "Allowed" else "Not allowed") {
+            onRequestMicrophone()
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("Android controls the actual permission dialog.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(14.dp))
+        OutlinedButton(onClick = onOpenSystemSettings, modifier = Modifier.fillMaxWidth()) {
+            Text("Open Android App Settings")
+        }
+        Spacer(Modifier.height(28.dp))
+        Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+        Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
+        Text("v1.0.4", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(18.dp))
+        Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SettingRow(icon: String, title: String, status: String, onClick: () -> Unit) {
+    Card(Modifier.fillMaxWidth().clickable { onClick() }, shape = RoundedCornerShape(18.dp)) {
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 24.sp)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+            }
+            Text("›", fontSize = 26.sp)
+        }
+    }
+}
+
+@Composable
+private fun BackTitle(title: String, onBack: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("‹", fontSize = 34.sp, modifier = Modifier.clickable { onBack() })
+        Spacer(Modifier.width(8.dp))
+        Text(title, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun Wave(level: Float, modifier: Modifier) {
+    val waveColor = MaterialTheme.colorScheme.primary
+    Canvas(modifier) {
+        val path = Path()
+        val mid = size.height / 2
+        path.moveTo(0f, mid)
+        for (i in 0..100) {
+            val x = size.width * i / 100f
+            val y = mid + sin(i * .5f) * level * size.height * .4f
+            path.lineTo(x, y)
+        }
+        drawPath(path = path, color = waveColor, style = Stroke(width = 3f))
+    }
+}
