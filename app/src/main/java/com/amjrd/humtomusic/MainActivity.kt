@@ -358,7 +358,6 @@ class AudioViewModel : ViewModel() {
                     file = melodyFile,
                     message = "Music ready — your hum + generated arrangement"
                 )
-                )
             }
         }
     }
