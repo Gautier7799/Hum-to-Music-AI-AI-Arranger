@@ -185,6 +185,8 @@ private fun HumToMusicTheme(content: @Composable () -> Unit) {
     )
 }
 
+data class MelodyNote(val midi: Int, val durationMs: Int)
+
 data class UiState(
     val recording: Boolean = false,
     val generatingMelody: Boolean = false,
@@ -336,7 +338,7 @@ class AudioViewModel : ViewModel() {
             val notes = compressMelody(frames)
             if (notes.isEmpty()) return@withContext
             val melodyFile = File.createTempFile("melody_", ".wav")
-            createMelodyWav(melodyFile, notes, state.style)
+            createMelodyWav(melodyFile, notes, state.style, state.sound, state.key, state.scale, state.chord)
             withContext(Dispatchers.Main) {
                 state = state.copy(
                     generatingMelody = false,
@@ -347,42 +349,89 @@ class AudioViewModel : ViewModel() {
         }
     }
 
-    private fun compressMelody(frames: List<Pair<Long, Int>>): List<Int> {
-        val first = frames.firstOrNull()?.first ?: return emptyList()
+    private fun compressMelody(frames: List<Pair<Long, Int>>): List<MelodyNote> {
+        if (frames.isEmpty()) return emptyList()
+
+        val first = frames.first().first
+        val bucketMs = 120L
         val buckets = linkedMapOf<Long, MutableList<Int>>()
+
         for ((time, midi) in frames) {
-            val bucket = (time - first) / 220L
+            val bucket = ((time - first) / bucketMs).coerceAtLeast(0L)
             buckets.getOrPut(bucket) { mutableListOf() }.add(midi)
         }
 
-        val raw = buckets.values.mapNotNull { values ->
-            values.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+        val raw = buckets.entries.map { (index, values) ->
+            index to (values.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key)
         }
 
-        val simplified = mutableListOf<Int>()
-        for (n in raw) if (simplified.lastOrNull() != n) simplified.add(n)
+        val smoothed = raw.mapIndexed { i, (_, value) ->
+            if (value == null) null
+            else {
+                val neighbours = (maxOf(0, i - 1)..minOf(raw.lastIndex, i + 1))
+                    .mapNotNull { raw[it].second }
+                neighbours.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: value
+            }
+        }
 
-        return simplified.take(32)
+        val result = mutableListOf<MelodyNote>()
+        var current: Int? = null
+        var duration = 0
+
+        for (midi in smoothed) {
+            if (midi == null) continue
+            if (current == null) {
+                current = midi
+                duration = bucketMs.toInt()
+            } else if (midi == current) {
+                duration += bucketMs.toInt()
+            } else {
+                result.add(MelodyNote(current, duration.coerceIn(120, 1200)))
+                current = midi
+                duration = bucketMs.toInt()
+            }
+        }
+        current?.let { result.add(MelodyNote(it, duration.coerceIn(120, 1200))) }
+
+        val cleaned = mutableListOf<MelodyNote>()
+        for (note in result) {
+            if (note.durationMs < 180 && cleaned.isNotEmpty()) {
+                val previous = cleaned.removeAt(cleaned.lastIndex)
+                cleaned.add(previous.copy(durationMs = previous.durationMs + note.durationMs))
+            } else {
+                cleaned.add(note)
+            }
+        }
+
+        return cleaned.take(48)
     }
 
-    private fun createMelodyWav(file: File, notes: List<Int>, style: String, sound: String = "Piano", key: String = "C", scale: String = "Major", chord: String = "C") {
-        val samplesPerNote = (rate * 0.42).toInt()
-        val totalSamples = samplesPerNote * notes.size
+    private fun createMelodyWav(file: File, notes: List<MelodyNote>, style: String, sound: String = "Piano", key: String = "C", scale: String = "Major", chord: String = "C") {
+        if (notes.isEmpty()) return
+        val samplesPerNote = notes.map { (rate * it.durationMs / 1000.0).roundToInt().coerceAtLeast(1) }
+        val totalSamples = samplesPerNote.sum()
         val keySemitones = mapOf("C" to 0, "D" to 2, "E" to 4, "F" to 5, "G" to 7, "A" to 9, "B" to 11)
         val root = keySemitones[key] ?: 0
         val chordIntervals = if (chord in listOf("Am", "Dm", "Em")) listOf(0, 3, 7) else listOf(0, 4, 7)
 
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
+            var noteIndex = 0
+            var noteStart = 0
             for (i in 0 until totalSamples) {
-                val noteIndex = (i / samplesPerNote).coerceIn(0, notes.lastIndex)
-                val midi = notes[noteIndex]
+                while (noteIndex < notes.lastIndex && i >= noteStart + samplesPerNote[noteIndex]) {
+                    noteStart += samplesPerNote[noteIndex]
+                    noteIndex++
+                }
+                val noteData = notes[noteIndex]
+                val midi = noteData.midi
                 val frequency = 440.0 * 2.0.pow((midi - 69) / 12.0)
-                val local = i % samplesPerNote
+                val local = i - noteStart
+                val currentNoteSamples = samplesPerNote[noteIndex]
                 val t = local.toDouble() / rate
 
                 val attack = (local / (rate * 0.035)).coerceAtMost(1.0)
-                val release = ((samplesPerNote - local) / (rate * 0.09)).coerceAtMost(1.0)
+                val release = ((currentNoteSamples - local) / (rate * 0.09)).coerceAtMost(1.0)
                 val envelope = minOf(attack, release).coerceAtLeast(0.0)
 
                 val harmonic = when (sound) {
@@ -397,7 +446,7 @@ class AudioViewModel : ViewModel() {
                 }
 
                 val rootMidi = 48 + root
-                val chordTone = rootMidi + chordIntervals[(noteIndex + i / (samplesPerNote / 2).coerceAtLeast(1)) % chordIntervals.size]
+                val chordTone = rootMidi + chordIntervals[(noteIndex + i / (rate / 2).coerceAtLeast(1)) % chordIntervals.size]
                 val chordFrequency = 440.0 * 2.0.pow((chordTone - 69) / 12.0)
                 val chordPad = 0.06 * sin(2.0 * PI * chordFrequency * t)
 
@@ -415,12 +464,12 @@ class AudioViewModel : ViewModel() {
             withContext(Dispatchers.Main) {
                 state = state.copy(generatingMelody = true, message = "Creating a local demo…")
             }
-            val seed = lyrics.length
-            val notes = if (lyrics.isBlank()) {
+            val noteValues = if (lyrics.isBlank()) {
                 listOf(60, 64, 67, 72, 67, 64, 60, 55)
             } else {
                 listOf(60, 62, 64, 67, 64, 62, 60, 55)
             }
+            val notes = noteValues.map { MelodyNote(it, 420) }
             val file = File.createTempFile("text_demo_", ".wav")
             createMelodyWav(file, notes, state.style, state.sound, state.key, state.scale, state.chord)
             withContext(Dispatchers.Main) {
@@ -450,6 +499,48 @@ class AudioViewModel : ViewModel() {
 
     private fun pitch(samples: ShortArray, count: Int): Float {
         if (count < 512) return 0f
+
+        var energy = 0.0
+        for (i in 0 until count) {
+            val value = samples[i].toDouble()
+            energy += value * value
+        }
+        val rms = kotlin.math.sqrt(energy / count) / 32768.0
+        if (rms < 0.015) return 0f
+
+        val window = minOf(count, 2048)
+        val minLag = (rate / 1000f).roundToInt().coerceAtLeast(1)
+        val maxLag = (rate / 70f).roundToInt().coerceAtMost(window - 2)
+
+        var bestLag = -1
+        var bestCorrelation = 0.0
+        for (lag in minLag..maxLag) {
+            var sum = 0.0
+            var energyA = 0.0
+            var energyB = 0.0
+            val limit = window - lag
+            for (i in 0 until limit) {
+                val a = samples[i].toDouble()
+                val b = samples[i + lag].toDouble()
+                sum += a * b
+                energyA += a * a
+                energyB += b * b
+            }
+            val denominator = kotlin.math.sqrt(energyA * energyB)
+            if (denominator > 0.0) {
+                val correlation = sum / denominator
+                if (correlation > bestCorrelation) {
+                    bestCorrelation = correlation
+                    bestLag = lag
+                }
+            }
+        }
+
+        if (bestLag > 0 && bestCorrelation >= 0.55) {
+            val hz = rate.toFloat() / bestLag
+            if (hz in 70f..1000f) return hz
+        }
+
         var crossings = 0
         var previous = samples[0]
         for (i in 1 until count) {
@@ -457,7 +548,7 @@ class AudioViewModel : ViewModel() {
             previous = samples[i]
         }
         val hz = crossings * rate / (2f * count)
-        return if (hz in 60f..1200f) hz else 0f
+        return if (hz in 70f..1000f && rms >= 0.01) hz else 0f
     }
 
     private fun hzToMidi(hz: Float): Int? {
@@ -577,7 +668,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.0.5 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.1.0 • Improved Hum → Melody", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -909,7 +1000,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.0.4", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.1.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
