@@ -466,14 +466,15 @@ class AudioViewModel : ViewModel() {
 
                 val drums = drumWave(t, style)
 
+                // Keep accompaniment continuous; only the hummed lead gets note envelopes.
                 val mix = (
-                    lead * 0.48 +
+                    lead * leadEnvelope * 0.55 +
                     chordSound * 0.20 +
-                    bass * 0.20 +
-                    drums * 0.13
+                    bass * 0.17 +
+                    drums * 0.08
                 )
 
-                val sample = (mix * leadEnvelope * 32767.0)
+                val sample = (mix * 32767.0)
                     .toInt()
                     .coerceIn(-32768, 32767)
 
