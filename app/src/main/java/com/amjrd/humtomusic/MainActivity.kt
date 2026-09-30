@@ -18,6 +18,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as lazyRowItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -656,7 +658,8 @@ private fun CreateSongScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.height(210.dp)
         ) {
-            items(genres) { genre ->
+            items(genres.size) { index ->
+                val genre = genres[index]
                 FilterChip(selected = vm.state.style == genre, onClick = { vm.setStyle(genre) }, label = { Text(genre) })
             }
         }
@@ -665,7 +668,7 @@ private fun CreateSongScreen(
         Text("Sound / Instrument", fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(sounds) { sound ->
+            lazyRowItems(sounds) { sound ->
                 FilterChip(selected = vm.state.sound == sound, onClick = { vm.setSound(sound) }, label = { Text(sound) })
             }
         }
@@ -675,7 +678,7 @@ private fun CreateSongScreen(
         Spacer(Modifier.height(8.dp))
         Text("Key", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            items(keys) { key ->
+            lazyRowItems(keys) { key ->
                 FilterChip(selected = vm.state.key == key, onClick = { vm.setKey(key) }, label = { Text(key) })
             }
         }
@@ -689,7 +692,7 @@ private fun CreateSongScreen(
         Spacer(Modifier.height(8.dp))
         Text("Chord", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            items(chords) { chord ->
+            lazyRowItems(chords) { chord ->
                 FilterChip(selected = vm.state.chord == chord, onClick = { vm.setChord(chord) }, label = { Text(chord) })
             }
         }
