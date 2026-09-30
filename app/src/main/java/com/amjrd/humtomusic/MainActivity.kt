@@ -198,6 +198,137 @@ private fun HumToMusicTheme(content: @Composable () -> Unit) {
 
 data class MelodyNote(val midi: Int, val durationMs: Int)
 
+data class MelodyAnalysis(
+    val notes: List<MelodyNote>,
+    val estimatedBpm: Int,
+    val keyRoot: Int,
+    val scale: String,
+    val phraseBars: Int,
+    val contour: List<Int>
+)
+
+data class ArrangementPlan(
+    val totalBars: Int,
+    val phraseBars: Int,
+    val sections: List<String>,
+    val progression: List<List<Int>>,
+    val estimatedBpm: Int
+) {
+    fun sectionForBar(bar: Int): String =
+        sections.getOrNull(bar.coerceIn(0, sections.lastIndex)) ?: "Verse"
+}
+
+data class MusicGenerationRequest(
+    val notes: List<MelodyNote>,
+    val style: String,
+    val sound: String,
+    val key: String,
+    val scale: String,
+    val chord: String
+)
+
+interface MusicGenerationEngine {
+    fun analyze(request: MusicGenerationRequest): MelodyAnalysis
+    fun createPlan(request: MusicGenerationRequest, analysis: MelodyAnalysis): ArrangementPlan
+}
+
+/**
+ * Local engine is deliberately deterministic and dependency-free.
+ * It becomes the fallback engine when a future AI engine is unavailable.
+ */
+class LocalMusicGenerationEngine : MusicGenerationEngine {
+    override fun analyze(request: MusicGenerationRequest): MelodyAnalysis {
+        val notes = request.notes
+        val durations = notes.map { it.durationMs.coerceAtLeast(80) }
+        val medianDuration = durations.sorted().getOrNull(durations.size / 2) ?: 420
+        val bpm = (60000.0 / medianDuration.toDouble() * 0.5)
+            .roundToInt()
+            .coerceIn(72, 132)
+
+        val histogram = IntArray(12)
+        notes.forEach { note ->
+            histogram[((note.midi % 12) + 12) % 12] += note.durationMs.coerceAtLeast(1)
+        }
+        val detectedRoot = histogram.indices.maxByOrNull { histogram[it] } ?: 0
+        val requestedRoot = mapOf(
+            "C" to 0, "D" to 2, "E" to 4, "F" to 5,
+            "G" to 7, "A" to 9, "B" to 11
+        )[request.key] ?: detectedRoot
+
+        val scale = if (request.scale.equals("Minor", ignoreCase = true)) "Minor" else "Major"
+        val phraseBars = when {
+            notes.size >= 32 -> 8
+            notes.size >= 16 -> 4
+            else -> 2
+        }
+
+        val contour = notes.map { it.midi }
+            .windowed(2, 1, partialWindows = false)
+            .map { (a, b) -> (b - a).coerceIn(-12, 12) }
+
+        return MelodyAnalysis(
+            notes = notes,
+            estimatedBpm = bpm,
+            keyRoot = requestedRoot,
+            scale = scale,
+            phraseBars = phraseBars,
+            contour = contour
+        )
+    }
+
+    override fun createPlan(
+        request: MusicGenerationRequest,
+        analysis: MelodyAnalysis
+    ): ArrangementPlan {
+        val totalDurationMs = analysis.notes.sumOf { it.durationMs }
+        val barMs = (60000.0 / analysis.estimatedBpm * 4.0).toLong().coerceAtLeast(1200L)
+        val totalBars = (totalDurationMs.toDouble() / barMs.toDouble())
+            .toInt()
+            .coerceAtLeast(1)
+        val bars = maxOf(totalBars, analysis.phraseBars)
+
+        val root = analysis.keyRoot
+        val minor = analysis.scale == "Minor"
+        val chordRoot = root
+        val progression = localProgression(request.style, chordRoot, minor)
+
+        val sections = MutableList(bars) { bar ->
+            val progress = bar.toDouble() / bars.toDouble()
+            when {
+                bars <= 4 -> "Verse"
+                progress < 0.12 -> "Intro"
+                progress < 0.42 -> "Verse"
+                progress < 0.68 -> "Chorus"
+                progress < 0.84 -> "Bridge"
+                else -> "Outro"
+            }
+        }
+
+        return ArrangementPlan(
+            totalBars = bars,
+            phraseBars = analysis.phraseBars,
+            sections = sections,
+            progression = progression,
+            estimatedBpm = analysis.estimatedBpm
+        )
+    }
+
+    private fun localProgression(style: String, root: Int, minor: Boolean): List<List<Int>> {
+        val offsets = when {
+            style.equals("Jazz", true) || style.equals("R&B", true) -> listOf(0, 5, 9, 7)
+            style.equals("Rock", true) || style.equals("Pop", true) -> listOf(0, 7, 9, 5)
+            style.equals("Cinematic", true) || style.equals("Ambient", true) -> listOf(0, 5, 7, 9)
+            minor -> listOf(0, 8, 5, 10)
+            else -> listOf(0, 7, 9, 5)
+        }
+        return offsets.map { offset ->
+            val r = root + offset
+            listOf(r, r + 4, r + 7)
+        }
+    }
+}
+
+
 data class UiState(
     val recording: Boolean = false,
     val generatingMelody: Boolean = false,
@@ -215,6 +346,8 @@ data class UiState(
 )
 
 class AudioViewModel : ViewModel() {
+    private val musicEngine: MusicGenerationEngine = LocalMusicGenerationEngine()
+
     var state by mutableStateOf(UiState())
         private set
 
@@ -349,9 +482,30 @@ class AudioViewModel : ViewModel() {
         withContext(Dispatchers.IO) {
             val notes = compressMelody(frames)
             if (notes.isEmpty()) return@withContext
-            lastHumNotes = notes
+
+            val request = MusicGenerationRequest(
+                notes = notes,
+                style = state.style,
+                sound = state.sound,
+                key = state.key,
+                scale = state.scale,
+                chord = state.chord
+            )
+            val analysis = musicEngine.analyze(request)
+            val plan = musicEngine.createPlan(request, analysis)
+
+            lastHumNotes = analysis.notes
             val melodyFile = File.createTempFile("melody_", ".wav")
-            createMelodyWav(melodyFile, notes, state.style, state.sound, state.key, state.scale, state.chord)
+            createMelodyWav(
+                melodyFile,
+                analysis.notes,
+                state.style,
+                state.sound,
+                state.key,
+                state.scale,
+                state.chord,
+                plan
+            )
             withContext(Dispatchers.Main) {
                 state = state.copy(
                     generatingMelody = false,
@@ -428,7 +582,8 @@ class AudioViewModel : ViewModel() {
         sound: String = "Piano",
         key: String = "C",
         scale: String = "Major",
-        chord: String = "C"
+        chord: String = "C",
+        arrangementPlan: ArrangementPlan? = null
     ) {
         if (notes.isEmpty()) return
 
@@ -442,10 +597,12 @@ class AudioViewModel : ViewModel() {
         val root = keySemitones[key] ?: 0
         val minor = scale.equals("Minor", ignoreCase = true)
         val chordRoot = chordRootSemitones(chord, root)
-        val progression = progressionForStyle(style, chordRoot, minor)
+        val fallbackProgression = progressionForStyle(style, chordRoot, minor)
         val beatsPerSecond = 2.0
-        val bars = maxOf(1, kotlin.math.ceil(totalSamples.toDouble() / (rate * 2.0)).toInt())
-        val phraseBars = maxOf(4, minOf(8, bars / 4))
+        val bars = arrangementPlan?.totalBars
+            ?: maxOf(1, kotlin.math.ceil(totalSamples.toDouble() / (rate * 2.0)).toInt())
+        val phraseBars = arrangementPlan?.phraseBars ?: maxOf(4, minOf(8, bars / 4))
+        val progression = arrangementPlan?.progression ?: fallbackProgression
 
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
@@ -466,7 +623,8 @@ class AudioViewModel : ViewModel() {
                 val noteT = local.toDouble() / rate.toDouble()
                 val beat = t * 2.0
                 val bar = beat / 4.0
-                val section = arrangementSection(bar.toInt(), bars)
+                val section = arrangementPlan?.sectionForBar(bar.toInt())
+                    ?: arrangementSection(bar.toInt(), bars)
                 val sectionLevel = sectionLevel(section, phraseBars)
                 val chordShift = when (section) {
                     "Intro" -> 0
