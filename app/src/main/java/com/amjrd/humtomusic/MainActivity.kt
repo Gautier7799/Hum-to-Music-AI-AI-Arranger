@@ -371,7 +371,7 @@ class AudioViewModel : ViewModel() {
     private fun note(hz: Float): String {
         val midi = hzToMidi(hz) ?: return "—"
         val names = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
-        return "\${names[(midi % 12 + 12) % 12]}\${midi / 12 - 1}"
+        return "${names[(midi % 12 + 12) % 12]}${midi / 12 - 1}"
     }
 
     private fun writeWavHeader(out: FileOutputStream, size: Int) {
@@ -564,7 +564,7 @@ private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrop
         }
         Spacer(Modifier.height(24.dp))
         Text(
-            if (state.note == "—") "—" else "\${state.note}  •  \${"%.1f".format(state.hz)} Hz",
+            if (state.note == "—") "—" else "${state.note}  •  ${"%.1f".format(state.hz)} Hz",
             fontSize = 22.sp,
             fontWeight = FontWeight.Medium
         )
