@@ -43,6 +43,7 @@ import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.log2
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -406,55 +407,187 @@ class AudioViewModel : ViewModel() {
         return cleaned.take(48)
     }
 
-    private fun createMelodyWav(file: File, notes: List<MelodyNote>, style: String, sound: String = "Piano", key: String = "C", scale: String = "Major", chord: String = "C") {
+    private fun createMelodyWav(
+        file: File,
+        notes: List<MelodyNote>,
+        style: String,
+        sound: String = "Piano",
+        key: String = "C",
+        scale: String = "Major",
+        chord: String = "C"
+    ) {
         if (notes.isEmpty()) return
-        val samplesPerNote = notes.map { (rate * it.durationMs / 1000.0).roundToInt().coerceAtLeast(1) }
+
+        // v1.2: render the hummed melody as a complete local arrangement.
+        // The hummed melody remains the lead; accompaniment is generated on-device.
+        val samplesPerNote = notes.map {
+            (rate * it.durationMs / 1000.0).roundToInt().coerceAtLeast(1)
+        }
         val totalSamples = samplesPerNote.sum()
         val keySemitones = mapOf("C" to 0, "D" to 2, "E" to 4, "F" to 5, "G" to 7, "A" to 9, "B" to 11)
         val root = keySemitones[key] ?: 0
-        val chordIntervals = if (chord in listOf("Am", "Dm", "Em")) listOf(0, 3, 7) else listOf(0, 4, 7)
+        val minor = scale.equals("Minor", ignoreCase = true)
+        val chordRoot = chordRootSemitones(chord, root)
+        val progression = progressionForStyle(style, chordRoot, minor)
 
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
+
             var noteIndex = 0
             var noteStart = 0
+
             for (i in 0 until totalSamples) {
                 while (noteIndex < notes.lastIndex && i >= noteStart + samplesPerNote[noteIndex]) {
                     noteStart += samplesPerNote[noteIndex]
                     noteIndex++
                 }
-                val noteData = notes[noteIndex]
-                val midi = noteData.midi
-                val frequency = 440.0 * 2.0.pow((midi - 69) / 12.0)
+
+                val note = notes[noteIndex]
                 val local = i - noteStart
-                val currentNoteSamples = samplesPerNote[noteIndex]
-                val t = local.toDouble() / rate
+                val noteSamples = samplesPerNote[noteIndex]
+                val t = i.toDouble() / rate.toDouble()
+                val noteT = local.toDouble() / rate.toDouble()
+                val beat = t * 2.0
+                val bar = beat / 4.0
 
                 val attack = (local / (rate * 0.035)).coerceAtMost(1.0)
-                val release = ((currentNoteSamples - local) / (rate * 0.09)).coerceAtMost(1.0)
-                val envelope = minOf(attack, release).coerceAtLeast(0.0)
+                val release = ((noteSamples - local) / (rate * 0.10)).coerceAtMost(1.0)
+                val leadEnvelope = minOf(attack, release).coerceAtLeast(0.0)
 
-                val harmonic = when (sound) {
-                    "Acoustic Guitar" -> sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 2.0 * t)
-                    "Electric Guitar" -> sin(2.0 * PI * frequency * t) + 0.30 * sin(2.0 * PI * frequency * 2.0 * t)
-                    "Bass" -> sin(2.0 * PI * frequency * 0.5 * t) + 0.12 * sin(2.0 * PI * frequency * t)
-                    "Strings" -> sin(2.0 * PI * frequency * t) + 0.22 * sin(2.0 * PI * frequency * 2.0 * t)
-                    "Synth" -> sin(2.0 * PI * frequency * t) + 0.35 * sin(2.0 * PI * frequency * 2.0 * t)
-                    "Drums" -> sin(2.0 * PI * 90.0 * t) * (1.0 - t / 0.42).coerceAtLeast(0.0)
-                    "Orchestra" -> sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 2.0 * t) + 0.08 * sin(2.0 * PI * frequency * 3.0 * t)
-                    else -> sin(2.0 * PI * frequency * t) + 0.22 * sin(2.0 * PI * frequency * 2.0 * t)
-                }
+                val melodyFrequency = midiFrequency(note.midi)
+                val lead = leadWave(melodyFrequency, noteT, sound)
 
-                val rootMidi = 48 + root
-                val chordTone = rootMidi + chordIntervals[(noteIndex + i / (rate / 2).coerceAtLeast(1)) % chordIntervals.size]
-                val chordFrequency = 440.0 * 2.0.pow((chordTone - 69) / 12.0)
-                val chordPad = 0.06 * sin(2.0 * PI * chordFrequency * t)
+                val chordIndex = bar.toInt() % progression.size
+                val chordNotes = progression[chordIndex]
+                val chordSound = chordPad(chordNotes, t, style)
 
-                val sample = ((harmonic * 0.15 + chordPad) * envelope * 32767.0).toInt().coerceIn(-32768, 32767)
+                val bassFrequency = midiFrequency(chordNotes.first() - 12)
+                val bass = bassWave(bassFrequency, t, style)
+
+                val drums = drumWave(t, style)
+
+                val mix = (
+                    lead * 0.48 +
+                    chordSound * 0.20 +
+                    bass * 0.20 +
+                    drums * 0.13
+                )
+
+                val sample = (mix * leadEnvelope * 32767.0)
+                    .toInt()
+                    .coerceIn(-32768, 32767)
+
                 out.write(sample and 255)
                 out.write((sample shr 8) and 255)
             }
         }
+    }
+
+    private fun chordRootSemitones(chord: String, keyRoot: Int): Int {
+        val names = mapOf(
+            "C" to 0, "Dm" to 2, "D" to 2, "Em" to 4, "E" to 4,
+            "F" to 5, "G" to 7, "Am" to 9, "A" to 9, "B" to 11
+        )
+        return names[chord.removeSuffix("m")]?.let { (keyRoot + it) % 12 } ?: keyRoot
+    }
+
+    private fun progressionForStyle(style: String, root: Int, minor: Boolean): List<List<Int>> {
+        val major = listOf(0, 4, 7)
+        val minorTriad = listOf(0, 3, 7)
+        val pop = if (minor) listOf(0, 8, 5, 10) else listOf(0, 7, 9, 5)
+        val rock = if (minor) listOf(0, 5, 8, 10) else listOf(0, 5, 7, 0)
+        val ballad = if (minor) listOf(0, 8, 5, 10) else listOf(0, 5, 7, 0)
+        val jazz = if (minor) listOf(0, 5, 10, 3) else listOf(0, 5, 7, 9)
+        val cinematic = if (minor) listOf(0, 8, 5, 3) else listOf(0, 5, 7, 4)
+
+        val offsets = when (style) {
+            "Rock" -> rock
+            "Ballad" -> ballad
+            "R&B", "Jazz", "Blues" -> jazz
+            "Classical", "Cinematic", "Ambient" -> cinematic
+            "EDM", "Hip-Hop", "Lo-Fi", "Reggae", "Latin" -> pop
+            else -> pop
+        }
+
+        return offsets.mapIndexed { index, offset ->
+            val chordRootMidi = 48 + ((root + offset) % 12)
+            val useMinor = minor || (index == 1 && style in listOf("Pop", "R&B", "Ballad"))
+            val intervals = if (useMinor) minorTriad else major
+            intervals.map { chordRootMidi + it }
+        }
+    }
+
+    private fun midiFrequency(midi: Int): Double =
+        440.0 * 2.0.pow((midi - 69) / 12.0)
+
+    private fun leadWave(frequency: Double, t: Double, sound: String): Double {
+        return when (sound) {
+            "Acoustic Guitar" ->
+                sin(2.0 * PI * frequency * t) + 0.18 * sin(2.0 * PI * frequency * 2.0 * t)
+            "Electric Guitar" ->
+                sin(2.0 * PI * frequency * t) + 0.30 * sin(2.0 * PI * frequency * 2.0 * t)
+            "Strings" ->
+                sin(2.0 * PI * frequency * t) + 0.22 * sin(2.0 * PI * frequency * 2.0 * t)
+            "Synth" ->
+                sin(2.0 * PI * frequency * t) + 0.35 * sin(2.0 * PI * frequency * 2.0 * t)
+            "Orchestra" ->
+                sin(2.0 * PI * frequency * t) +
+                    0.18 * sin(2.0 * PI * frequency * 2.0 * t) +
+                    0.08 * sin(2.0 * PI * frequency * 3.0 * t)
+            else ->
+                sin(2.0 * PI * frequency * t) + 0.22 * sin(2.0 * PI * frequency * 2.0 * t)
+        } * 0.65
+    }
+
+    private fun chordPad(chordNotes: List<Int>, t: Double, style: String): Double {
+        val brightness = when (style) {
+            "EDM", "Synth" -> 0.24
+            "Rock", "Hip-Hop" -> 0.18
+            "Classical", "Cinematic", "Ambient" -> 0.14
+            else -> 0.16
+        }
+        return chordNotes.sumOf { midi ->
+            sin(2.0 * PI * midiFrequency(midi) * t)
+        } / chordNotes.size * brightness
+    }
+
+    private fun bassWave(frequency: Double, t: Double, style: String): Double {
+        val harmonic = when (style) {
+            "Rock", "Hip-Hop", "EDM" -> 0.22
+            else -> 0.14
+        }
+        return (
+            sin(2.0 * PI * frequency * t) +
+                harmonic * sin(2.0 * PI * frequency * 2.0 * t)
+            ) * 0.50
+    }
+
+    private fun drumWave(t: Double, style: String): Double {
+        val beatLength = 0.5
+        val step = (t / beatLength).toInt()
+        val phase = t - step * beatLength
+        val decay = (1.0 - phase / 0.18).coerceIn(0.0, 1.0)
+
+        val kick = if (step % 4 == 0 || (style == "EDM" && step % 4 == 2)) {
+            sin(2.0 * PI * (70.0 - 28.0 * phase / 0.18).coerceAtLeast(35.0) * phase) * decay
+        } else 0.0
+
+        val snare = if (step % 4 == 2) {
+            (
+                sin(2.0 * PI * 180.0 * phase) +
+                    0.35 * sin(2.0 * PI * 330.0 * phase)
+            ) * decay * 0.55
+        } else 0.0
+
+        val hat = if (style == "Ballad" || style == "Classical") {
+            0.0
+        } else {
+            val hatPhase = t - floor(t * 4.0) / 4.0
+            (sin(2.0 * PI * 3100.0 * hatPhase) *
+                (1.0 - hatPhase / 0.055).coerceAtLeast(0.0)) * 0.12
+        }
+
+        return kick * 0.55 + snare * 0.35 + hat
     }
 
     fun createTextDemo(lyrics: String) {
@@ -668,7 +801,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.1.0 • Improved Hum → Melody", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.2.0 • Full Local Arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -1000,7 +1133,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.1.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.2.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
