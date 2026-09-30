@@ -3,6 +3,8 @@ package com.amjrd.humtomusic
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.ClipboardManager
+import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -47,15 +49,29 @@ class MainActivity : ComponentActivity() {
     ) { }
 
     private lateinit var currentViewModel: AudioViewModel
+    private var sharedLyrics by mutableStateOf("")
+
+    private val openLyricsFile = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@registerForActivityResult
+        val text = try {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        } catch (_: Exception) { null }
+        if (!text.isNullOrBlank()) sharedLyrics = text
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         currentViewModel = AudioViewModel()
+        handleIncomingLyrics(intent)
 
         setContent {
             HumToMusicTheme {
                 HumToMusicApp(
                     vm = currentViewModel,
+                    importedLyrics = sharedLyrics,
+                    onImportLyrics = { openLyricsFile.launch(arrayOf("text/*", "application/json", "application/rtf")) },
                     onRequestMicrophone = { requestMicrophone() },
                     onOpenSystemSettings = {
                         startActivity(
@@ -73,6 +89,17 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIncomingLyrics(intent)
+    }
+
+    private fun handleIncomingLyrics(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+        if (!text.isNullOrBlank()) sharedLyrics = text
     }
 
     private fun requestMicrophone() {
