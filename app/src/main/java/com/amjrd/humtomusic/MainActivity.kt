@@ -344,7 +344,7 @@ class AudioViewModel : ViewModel() {
                 state = state.copy(
                     generatingMelody = false,
                     file = melodyFile,
-                    message = "Melody ready — created from your hum"
+                    message = "Full arrangement ready — melody + chords + bass + drums"
                 )
             }
         }
