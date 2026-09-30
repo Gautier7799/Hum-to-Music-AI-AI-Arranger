@@ -432,7 +432,7 @@ class AudioViewModel : ViewModel() {
     ) {
         if (notes.isEmpty()) return
 
-        // v1.6: render the hummed melody as the lead of a structured local arrangement.
+        // v1.7: render the hummed melody as the lead of an evolving song arrangement.
         // The hum supplies the idea; accompaniment is generated independently on-device.
         val samplesPerNote = notes.map {
             (rate * it.durationMs / 1000.0).roundToInt().coerceAtLeast(1)
@@ -443,6 +443,7 @@ class AudioViewModel : ViewModel() {
         val minor = scale.equals("Minor", ignoreCase = true)
         val chordRoot = chordRootSemitones(chord, root)
         val progression = progressionForStyle(style, chordRoot, minor)
+        val bars = maxOf(1, kotlin.math.ceil(totalSamples.toDouble() / (rate * 2.0)).toInt())
 
         FileOutputStream(file).use { out ->
             writeWavHeader(out, totalSamples * 2)
@@ -463,6 +464,15 @@ class AudioViewModel : ViewModel() {
                 val noteT = local.toDouble() / rate.toDouble()
                 val beat = t * 2.0
                 val bar = beat / 4.0
+                val section = arrangementSection(bar.toInt(), bars)
+                val sectionLevel = sectionLevel(section)
+                val chordShift = when (section) {
+                    "Intro" -> 0
+                    "Verse" -> 0
+                    "Chorus" -> 1
+                    "Bridge" -> 2
+                    else -> 0
+                }
 
                 val attack = (local / (rate * 0.035)).coerceAtMost(1.0)
                 val release = ((noteSamples - local) / (rate * 0.10)).coerceAtMost(1.0)
@@ -472,26 +482,27 @@ class AudioViewModel : ViewModel() {
                 val lead = leadWave(melodyFrequency, noteT, sound)
                 val harmony = harmonyWave(melodyFrequency, noteT, style)
 
-                val chordIndex = bar.toInt() % progression.size
+                val chordIndex = (bar.toInt() + chordShift) % progression.size
                 val chordNotes = progression[chordIndex]
-                val chordSound = chordPad(chordNotes, t, style)
+                val chordSound = chordPad(chordNotes, t, style) * sectionLevel
 
                 val bassFrequency = midiFrequency(chordNotes.first() - 12)
-                val bass = bassWave(bassFrequency, t, style)
+                val bass = bassWave(bassFrequency, t, style) * sectionLevel
 
-                val drums = drumWave(t, style)
-                val arpeggio = arpeggioWave(chordNotes, t, style)
+                val drums = drumWave(t, style) * drumLevel(section, style)
+                val arpeggio = arpeggioWave(chordNotes, t, style) * sectionLevel
+                val counter = counterMelodyWave(chordNotes, note.midi, t, noteT, section, style)
 
-                // v1.4: the hum is the musical idea, not the whole arrangement.
-                // Build an independent backing track around it: chords + bass +
-                // drums + a generated arpeggio/counter-line.
+                // v1.7: the hum remains the lead idea, while the arrangement evolves
+                // through song sections instead of repeating one static loop.
                 val mix = (
-                    lead * leadEnvelope * 0.32 +
-                    harmony * leadEnvelope * 0.07 +
-                    chordSound * 0.27 +
-                    bass * 0.19 +
-                    drums * 0.08 +
-                    arpeggio * 0.07
+                    lead * leadEnvelope * 0.30 +
+                    harmony * leadEnvelope * 0.06 +
+                    chordSound * 0.25 +
+                    bass * 0.18 +
+                    drums * 0.10 +
+                    arpeggio * 0.06 +
+                    counter * 0.05
                 )
 
                 val sample = (mix * 32767.0)
@@ -502,6 +513,75 @@ class AudioViewModel : ViewModel() {
                 out.write((sample shr 8) and 255)
             }
         }
+    }
+
+    private fun arrangementSection(bar: Int, totalBars: Int): String {
+        if (totalBars <= 4) return "Verse"
+        val progress = bar.toDouble() / totalBars.toDouble()
+        return when {
+            progress < 0.15 -> "Intro"
+            progress < 0.45 -> "Verse"
+            progress < 0.70 -> "Chorus"
+            progress < 0.88 -> "Bridge"
+            else -> "Outro"
+        }
+    }
+
+    private fun sectionLevel(section: String): Double = when (section) {
+        "Intro" -> 0.58
+        "Verse" -> 0.82
+        "Chorus" -> 1.0
+        "Bridge" -> 0.72
+        "Outro" -> 0.62
+        else -> 0.82
+    }
+
+    private fun drumLevel(section: String, style: String): Double = when (section) {
+        "Intro" -> if (style == "Ballad" || style == "Classical" || style == "Ambient") 0.18 else 0.38
+        "Verse" -> 0.72
+        "Chorus" -> 1.0
+        "Bridge" -> 0.48
+        "Outro" -> 0.34
+        else -> 0.72
+    }
+
+    private fun counterMelodyWave(
+        chordNotes: List<Int>,
+        leadMidi: Int,
+        t: Double,
+        noteT: Double,
+        section: String,
+        style: String
+    ): Double {
+        if (chordNotes.isEmpty() || (section == "Intro" && noteT < 0.12)) return 0.0
+
+        val stepLength = when (style) {
+            "EDM", "Hip-Hop", "Rock", "Reggae", "Latin" -> 0.5
+            else -> 0.75
+        }
+        val step = floor(t / stepLength).toInt()
+        val chordTone = chordNotes[(step + if (section == "Bridge") 1 else 0) % chordNotes.size]
+        val direction = if (section == "Chorus") 12 else 7
+        val target = chordTone + direction
+        val adjusted = if (abs(target - leadMidi) <= 2) target + 3 else target
+
+        val local = t - step * stepLength
+        val attack = (local / 0.035).coerceAtMost(1.0)
+        val release = ((stepLength - local) / 0.12).coerceAtMost(1.0)
+        val envelope = minOf(attack, release).coerceAtLeast(0.0)
+
+        val frequency = midiFrequency(adjusted)
+        val tone = sin(2.0 * PI * frequency * local) +
+            0.12 * sin(2.0 * PI * frequency * 2.0 * local)
+
+        val level = when (section) {
+            "Chorus" -> 0.72
+            "Bridge" -> 0.55
+            "Outro" -> 0.38
+            else -> 0.46
+        }
+
+        return tone * envelope * level
     }
 
     private fun chordRootSemitones(chord: String, keyRoot: Int): Int {
