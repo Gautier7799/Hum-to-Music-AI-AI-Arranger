@@ -344,7 +344,7 @@ class AudioViewModel : ViewModel() {
                 state = state.copy(
                     generatingMelody = false,
                     file = melodyFile,
-                    message = "Arrangement ready — melody + harmony + chords + bass + drums"
+                    message = "Music ready — your hum + generated arrangement"
                 )
             }
         }
@@ -418,8 +418,8 @@ class AudioViewModel : ViewModel() {
     ) {
         if (notes.isEmpty()) return
 
-        // v1.3: render the hummed melody as a complete local arrangement.
-        // The hummed melody remains the lead; harmony and accompaniment are generated on-device.
+        // v1.4: render the hummed melody as the lead of a generated arrangement.
+        // The hum supplies the idea; accompaniment is generated independently on-device.
         val samplesPerNote = notes.map {
             (rate * it.durationMs / 1000.0).roundToInt().coerceAtLeast(1)
         }
@@ -466,16 +466,18 @@ class AudioViewModel : ViewModel() {
                 val bass = bassWave(bassFrequency, t, style)
 
                 val drums = drumWave(t, style)
+                val arpeggio = arpeggioWave(chordNotes, t, style)
 
-                // v1.3: keep the hummed lead recognizable while adding a subtle
-                // harmony voice and more rhythmic accompaniment. Everything stays
-                // deterministic and fully on-device for stability.
+                // v1.4: the hum is the musical idea, not the whole arrangement.
+                // Build an independent backing track around it: chords + bass +
+                // drums + a generated arpeggio/counter-line.
                 val mix = (
-                    lead * leadEnvelope * 0.50 +
-                    harmony * leadEnvelope * 0.08 +
-                    chordSound * 0.20 +
-                    bass * 0.15 +
-                    drums * 0.07
+                    lead * leadEnvelope * 0.32 +
+                    harmony * leadEnvelope * 0.07 +
+                    chordSound * 0.27 +
+                    bass * 0.19 +
+                    drums * 0.08 +
+                    arpeggio * 0.07
                 )
 
                 val sample = (mix * 32767.0)
@@ -560,6 +562,27 @@ class AudioViewModel : ViewModel() {
         return chordNotes.sumOf { midi ->
             sin(2.0 * PI * midiFrequency(midi) * t)
         } / chordNotes.size * brightness * pulse
+    }
+
+    private fun arpeggioWave(chordNotes: List<Int>, t: Double, style: String): Double {
+        if (chordNotes.isEmpty()) return 0.0
+
+        val stepLength = when (style) {
+            "Ballad", "Classical", "Cinematic", "Ambient" -> 0.5
+            "EDM", "Hip-Hop", "Rock", "Reggae", "Latin" -> 0.25
+            else -> 0.375
+        }
+        val step = floor(t / stepLength).toInt()
+        val note = chordNotes[step % chordNotes.size]
+        val local = t - step * stepLength
+        val attack = (local / 0.025).coerceAtMost(1.0)
+        val release = ((stepLength - local) / 0.08).coerceAtMost(1.0)
+        val envelope = minOf(attack, release).coerceAtLeast(0.0)
+
+        val frequency = midiFrequency(note + 12)
+        val tone = sin(2.0 * PI * frequency * local) +
+            0.18 * sin(2.0 * PI * frequency * 2.0 * local)
+        return tone * envelope * 0.62
     }
 
     private fun bassWave(frequency: Double, t: Double, style: String): Double {
@@ -832,7 +855,7 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.weight(1f))
-        Text("v1.0.5 • Local melody engine", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        Text("v1.4.0 • Hum-to-Music arranger", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
     }
 }
 
@@ -1164,7 +1187,7 @@ private fun SettingsScreen(
         Text("About", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("Hum to Music AI – AI Arranger", fontWeight = FontWeight.Medium)
-        Text("v1.0.4", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("v1.4.0", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(18.dp))
         Text("Microphone access is requested through Android's native permission system.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
