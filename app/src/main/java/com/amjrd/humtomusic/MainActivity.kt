@@ -52,8 +52,11 @@ import kotlin.math.sin
 class MainActivity : ComponentActivity() {
     private val microphonePermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { }
+    ) { granted ->
+        microphoneGranted = granted
+    }
 
+    private var microphoneGranted by mutableStateOf(false)
     private lateinit var currentViewModel: AudioViewModel
     private var sharedLyrics by mutableStateOf("")
     private var mediaPlayer: MediaPlayer? = null
@@ -71,6 +74,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         currentViewModel = AudioViewModel()
+        microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         handleIncomingLyrics(intent)
 
         setContent {
@@ -79,6 +83,7 @@ class MainActivity : ComponentActivity() {
                     vm = currentViewModel,
                     importedLyrics = sharedLyrics,
                     onImportLyrics = { openLyricsFile.launch(arrayOf("text/*", "application/json", "application/rtf")) },
+                    microphoneGranted = microphoneGranted,
                     onRequestMicrophone = { requestMicrophone() },
                     onOpenSystemSettings = {
                         startActivity(
@@ -104,6 +109,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingLyrics(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        microphoneGranted = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun playAudio() {
@@ -859,7 +869,7 @@ fun HumToMusicApp(
             onSettings = { screen = "settings" }
         )
         "create" -> CreateSongScreen(vm, importedLyrics, onImportLyrics, onBack = { screen = "home" }, onPlayAudio = onPlayAudio, onStopAudio = onStopAudio)
-        "record" -> RecordScreen(vm, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone, onCreateMusicAi = { screen = "create" })
+        "record" -> RecordScreen(vm, microphoneGranted, onBack = { screen = "home" }, onRequestMicrophone = onRequestMicrophone, onCreateMusicAi = { screen = "create" })
         "songs" -> SongsScreen(vm, onBack = { screen = "home" }, onExportWav, onPlayAudio, onStopAudio)
         "settings" -> SettingsScreen(
             onBack = { screen = "home" },
@@ -1127,10 +1137,9 @@ private fun CreateSongScreen(
 }
 
 @Composable
-private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrophone: () -> Unit, onCreateMusicAi: () -> Unit) {
+private fun RecordScreen(vm: AudioViewModel, microphoneGranted: Boolean, onBack: () -> Unit, onRequestMicrophone: () -> Unit, onCreateMusicAi: () -> Unit) {
     val state = vm.state
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val micGranted = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    val micGranted = microphoneGranted
 
     Column(Modifier.fillMaxSize().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         BackTitle("Hum a Melody", onBack)
@@ -1157,7 +1166,11 @@ private fun RecordScreen(vm: AudioViewModel, onBack: () -> Unit, onRequestMicrop
         Spacer(Modifier.height(24.dp))
         Button(
             onClick = {
-                if (!micGranted) onRequestMicrophone() else vm.toggle()
+                if (!micGranted) {
+                    onRequestMicrophone()
+                } else {
+                    vm.toggle()
+                }
             },
             enabled = !state.generatingMelody,
             modifier = Modifier.size(150.dp),
