@@ -845,6 +845,7 @@ class AudioViewModel : ViewModel() {
 fun HumToMusicApp(
     vm: AudioViewModel,
     importedLyrics: String,
+    microphoneGranted: Boolean,
     onImportLyrics: () -> Unit,
     onRequestMicrophone: () -> Unit,
     onOpenSystemSettings: () -> Unit,
